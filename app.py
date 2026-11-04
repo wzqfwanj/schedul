@@ -108,6 +108,8 @@ def _safe_next(value: str | None) -> str | None:
     path = posixpath.normpath(parts.path)
     if not path.startswith("/") or path.startswith("//"):
         return None
+    if parts.path.endswith("/") and path != "/":
+        path += "/"
     return path + (("?" + parts.query) if parts.query else "")
 
 
@@ -239,7 +241,8 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             if not session.get("user"):
                 if request.path.startswith(("/api/", "/uploads/")):
                     return jsonify({"error": "unauthorized"}), 401
-                return redirect(url_for("login", next=request.full_path.rstrip("?")))
+                next_url = request.script_root + request.full_path
+                return redirect(url_for("login", next=next_url.rstrip("?")))
             return view(*args, **kwargs)
 
         return wrapped

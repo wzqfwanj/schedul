@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 import app as app_module
 from app import create_app
 
@@ -308,6 +310,37 @@ class SchedulTestCase(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+
+    def test_served_under_path_prefix(self):
+        """部署在 /schedul/ 子路径下时，链接与重定向都要带前缀（模拟 Caddy + ProxyFix）。"""
+        self.app.wsgi_app = ProxyFix(
+            self.app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1
+        )
+        headers = {"X-Forwarded-Prefix": "/schedul"}
+        anonymous = self.app.test_client()
+
+        response = anonymous.get("/", headers=headers)
+        self.assertEqual(response.status_code, 302)
+        location = response.headers["Location"]
+        self.assertTrue(location.startswith("/schedul/login"), location)
+        self.assertIn("next=/schedul/", location)
+
+        login = anonymous.post(
+            "/login",
+            data={"username": "tester", "password": "secret", "next": "/schedul/"},
+            headers=headers,
+        )
+        self.assertEqual(login.status_code, 302)
+        self.assertEqual(login.headers["Location"], "/schedul/")
+
+        page = anonymous.get("/", headers=headers)
+        html = page.get_data(as_text=True)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('/schedul/static/style.css', html)
+        self.assertIn('href="/schedul/day/2026-11-04"', html)
+
+        day = anonymous.get("/day/2026-11-04", headers=headers)
+        self.assertIn('/schedul/static/day.js', day.get_data(as_text=True))
 
 
 if __name__ == "__main__":
