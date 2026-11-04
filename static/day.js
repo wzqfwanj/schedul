@@ -7,7 +7,8 @@
   }
 
   var date = page.getAttribute('data-date');
-  var apiBase = '/api/days/' + date;
+  var apiBase = page.getAttribute('data-api') || '/api/days/' + date;
+  var imageApiBase = (page.getAttribute('data-image-api') || '/api/images/0').replace(/0$/, '');
   var MAX_UPLOAD = 10 * 1024 * 1024;
 
   var textarea = document.getElementById('event-input');
@@ -319,7 +320,7 @@
     if (!window.confirm('删除这张截图？')) {
       return;
     }
-    fetch('/api/images/' + figure.dataset.id, { method: 'DELETE' })
+    fetch(imageApiBase + figure.dataset.id, { method: 'DELETE' })
       .then(function (response) {
         if (!response.ok) {
           throw new Error('HTTP ' + response.status);

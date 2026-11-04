@@ -340,7 +340,10 @@ class SchedulTestCase(unittest.TestCase):
         self.assertIn('href="/schedul/day/2026-11-04"', html)
 
         day = anonymous.get("/day/2026-11-04", headers=headers)
-        self.assertIn('/schedul/static/day.js', day.get_data(as_text=True))
+        day_html = day.get_data(as_text=True)
+        self.assertIn('/schedul/static/day.js', day_html)
+        self.assertIn('data-api="/schedul/api/days/2026-11-04"', day_html)
+        self.assertIn('data-image-api="/schedul/api/images/0"', day_html)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="day-page" data-date="{{ date_iso }}">
+<div class="day-page" data-date="{{ date_iso }}"
+     data-api="{{ url_for('api_get_day', date_str=date_iso) }}"
+     data-image-api="{{ url_for('api_delete_image', image_id=0) }}">
   <section class="day-head">
     <a class="back" href="{{ url_for('calendar_view', month=month_key) }}">‹ 日历</a>
     <div class="day-title">
