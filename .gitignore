@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 本地数据：数据库、截图、会话密钥
+data/
+.env
+
+# 日志
+*.log
+
+# 本机验收产物（不进入公开仓库）
+qa-artifacts/
+qa-report.md
+tests/qa_blackbox.py

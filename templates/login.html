@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="login">
+  <h1 class="login-title">日程</h1>
+  <p class="login-sub">请登录后查看</p>
+  <form method="post" action="{{ url_for('login_post') }}" class="login-form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="field">
+      <span class="field-label">账号</span>
+      <input class="input" type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label class="field">
+      <span class="field-label">密码</span>
+      <input class="input" type="password" name="password" autocomplete="current-password" required>
+    </label>
+    {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+    <button class="primary-btn" type="submit">登录</button>
+  </form>
+</div>
+{% endblock %}

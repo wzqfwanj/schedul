@@ -1,0 +1,50 @@
+[Unit]
+# 日程表：Flask + SQLite，由 systemd 托管，waitress 仅监听回环地址，供 nginx 反向代理。
+# 安装：sudo cp deploy/schedul.service /etc/systemd/system/schedul.service
+# 如果代码目录不是 /opt/schedul，请同步修改 WorkingDirectory 和 ExecStart。
+Description=Schedul - 极简日程表 (Flask + SQLite)
+# 改成你的仓库地址（可选）
+Documentation=https://github.com/your-account/schedul
+After=network.target
+
+[Service]
+Type=simple
+# 专用的非 root 运行用户（见部署文档第 1 节）
+User=schedul
+Group=schedul
+WorkingDirectory=/opt/schedul
+
+# 生产环境变量：APP_USERNAME / APP_PASSWORD / SECRET_KEY / DATA_DIR / APP_TZ / COOKIE_SECURE
+# 文件必须存在且仅 root 可读（chmod 600）；修改后 systemctl restart schedul
+EnvironmentFile=/etc/schedul.env
+# 代码目录只读，禁止 Python 写入 __pycache__
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# 生产用 waitress（依赖已装在项目虚拟环境中）；不要用 python app.py 常驻
+# 需要更高并发时可在末尾追加 --threads=8 等参数
+ExecStart=/opt/schedul/.venv/bin/waitress-serve --listen=127.0.0.1:8000 wsgi:app
+
+Restart=on-failure
+RestartSec=3
+
+# 数据目录：systemd 自动创建 /var/lib/schedul 并授权给运行用户，
+# 与 /etc/schedul.env 中的 DATA_DIR=/var/lib/schedul 保持一致。
+# 如果改用其他 DATA_DIR，请同时修改 StateDirectory/ReadWritePaths。
+StateDirectory=schedul
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/schedul
+UMask=0077
+
+# 基础加固：只读系统、禁止提权、私有临时目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

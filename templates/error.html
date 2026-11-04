@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="error-page">
+  <p class="error-code">{{ code }}</p>
+  <p class="error-message">{{ message }}</p>
+  <a class="text-btn" href="{{ url_for('calendar_view') }}">返回日历</a>
+</div>
+{% endblock %}

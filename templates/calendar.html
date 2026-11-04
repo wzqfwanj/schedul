@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cal-head">
+  <div class="month-nav">
+    <a class="icon-btn" href="{{ url_for('calendar_view', month=prev_month) }}" aria-label="上个月">‹</a>
+    <h1 class="month-title">{{ title }}</h1>
+    <a class="icon-btn" href="{{ url_for('calendar_view', month=next_month) }}" aria-label="下个月">›</a>
+  </div>
+  <a class="text-btn" href="{{ url_for('calendar_view', month=today_iso[:7]) }}">今天</a>
+</section>
+
+<div class="calendar" role="grid" aria-label="月历">
+  {% for name in weekday_names %}
+  <div class="dow" role="columnheader">{{ name }}</div>
+  {% endfor %}
+  {% for week in weeks %}
+    {% for cell in week %}
+    <a class="cell{% if not cell.in_month %} out{% endif %}{% if cell.is_today %} today{% endif %}"
+       role="gridcell"
+       href="{{ url_for('day_view', date_str=cell.iso) }}"
+       aria-label="{{ cell.iso }}{% if cell.has_content %}，有日程{% endif %}">
+      <span class="num">{{ cell.day }}</span>
+      {% if cell.has_content %}<span class="dot" aria-hidden="true"></span>{% endif %}
+    </a>
+    {% endfor %}
+  {% endfor %}
+</div>
+<p class="cal-tip">点击日期安排当天日程</p>
+{% endblock %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ (title ~ ' · 日程') if title else '日程' }}</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="{{ url_for('calendar_view') }}">日程</a>
+    <div class="top-actions">
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换明暗主题" title="切换明暗主题">◐</button>
+      {% if session.get('user') %}
+      <form class="inline-form" method="post" action="{{ url_for('logout') }}">
+        <button class="text-btn" type="submit">退出</button>
+      </form>
+      {% endif %}
+    </div>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
