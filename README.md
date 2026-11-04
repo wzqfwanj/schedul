@@ -248,7 +248,7 @@ python -m unittest discover -s tests -v
 #   deploy/nginx-schedul.conf  nginx 站点配置
 ```
 
-完整步骤（创建用户与目录、上传代码、venv、环境变量文件、systemd、nginx、certbot、防火墙、升级与回滚、备份与恢复、日志排查）见 **[deploy/DEPLOY.md](deploy/DEPLOY.md)**，其中的域名统一使用占位符 `example.com`，请替换为你自己的域名。
+完整步骤（创建用户与目录、上传代码、venv、环境变量文件、systemd、nginx、certbot、防火墙、升级与回滚、备份与恢复、日志排查）见 **[deploy/DEPLOY.md](deploy/DEPLOY.md)**，其中的域名统一使用占位符 `example.com`，请替换为你自己的域名。也支持挂载到已有域名的子路径（如 `https://example.com/schedul/`），见部署文档的「挂载到子路径」一节。
 
 ## 常见问题
 

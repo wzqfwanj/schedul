@@ -158,6 +158,40 @@ ss -ltnp | grep 8000
 
 > 不要在生产环境用 `python app.py` 常驻：那是 Flask 开发服务器，性能和稳定性都不适合对外服务。
 
+### 6.1 可选：挂载到子路径（如 `/schedul/`）
+
+如果域名下已经运行了其他站点，不想新增子域名/证书，可以把日程表挂到子路径。`wsgi.py` 已启用 `ProxyFix(x_prefix=1)`，反向代理只需：
+
+1. 转发时**去掉** `/schedul` 前缀（应用内部仍以 `/` 为根）；
+2. 传入 `X-Forwarded-Prefix: /schedul`，应用生成的链接会自动带上前缀。
+
+Caddy 示例（放在 `wkeeli.cn { ... }` 之类的站点块里，位于兜底 `reverse_proxy` 之前）：
+
+```caddyfile
+redir /schedul /schedul/ 308
+handle_path /schedul/* {
+    reverse_proxy http://127.0.0.1:8000 {
+        header_up X-Forwarded-Prefix /schedul
+    }
+}
+```
+
+nginx 示例：
+
+```nginx
+location = /schedul { return 308 /schedul/; }
+location /schedul/ {
+    proxy_pass http://127.0.0.1:8000/;   # 末尾的 / 负责去掉 /schedul 前缀
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /schedul;
+    client_max_body_size 12m;
+}
+```
+
+访问地址即 `https://example.com/schedul/`。此时会话 Cookie 的 `Path` 为 `/`，同域下的其他应用也会收到该 Cookie（无法伪造签名，但如介意可给本服务单独使用子域名）。
+
 ## 6. 配置 nginx 反向代理
 
 复制站点配置并启用（`server_name` 先在模板里改成你的域名）：
