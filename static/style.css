@@ -283,25 +283,33 @@ textarea {
   text-decoration: underline;
 }
 
-.event-view {
-  min-height: 120px;
+.event-editor {
+  width: 100%;
+  min-height: 190px;
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--field);
-  line-height: 2;
+  color: var(--fg);
+  line-height: 1.9;
   white-space: pre-wrap;
   word-break: break-word;
+  outline: none;
+  cursor: text;
 }
 
-.event-line {
-  min-height: 2em;
+.event-editor:focus {
+  border-color: var(--fg);
 }
 
-.event-empty {
-  margin: 0;
+.event-editor:empty::before {
+  content: attr(data-placeholder);
   color: var(--muted);
-  font-size: 13px;
+  pointer-events: none;
+}
+
+.event-editor .data-chip {
+  margin: 0 3px;
 }
 
 .data-chip {
@@ -335,41 +343,32 @@ textarea {
   border-style: dotted;
 }
 
-.orphan-line {
-  margin-top: 6px;
+.orphan-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.orphan-bar[hidden] {
+  display: none;
 }
 
 .orphan-label {
-  margin-right: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.orphan-bar .data-chip {
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .edit-hint {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--muted);
-}
-
-.event-input {
-  width: 100%;
-  min-height: 190px;
-  padding: 14px 16px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--field);
-  color: var(--fg);
-  line-height: 1.75;
-  outline: none;
-}
-
-.event-input::placeholder {
-  color: var(--muted);
-}
-
-.event-input:focus {
-  border-color: var(--fg);
 }
 
 .paste-zone {
@@ -738,8 +737,8 @@ body.no-scroll {
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   }
 
-  .event-view {
-    min-height: 100px;
+  .event-editor {
+    min-height: 120px;
     padding: 12px 13px;
   }
 

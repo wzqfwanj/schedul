@@ -11,12 +11,12 @@
   var imageApiBase = (page.getAttribute('data-image-api') || '/api/images/0').replace(/0$/, '');
   var MAX_UPLOAD = 10 * 1024 * 1024;
 
-  var textarea = document.getElementById('event-input');
+  var editor = document.getElementById('event-editor');
+  var initialEvent = editor ? editor.textContent || '' : '';
   var statusEl = document.getElementById('save-status');
-  var eventView = document.getElementById('event-view');
-  var eventHint = document.getElementById('event-hint');
-  var editBtn = document.getElementById('edit-event');
   var insertBtn = document.getElementById('insert-data');
+  var orphanBar = document.getElementById('orphan-bar');
+  var orphanChips = document.getElementById('orphan-chips');
 
   var dataModal = document.getElementById('data-modal');
   var dataTitle = document.getElementById('data-modal-title');
@@ -39,7 +39,6 @@
   var currentSlot = 0;
   var currentTokenCount = 0;
   var modalOpener = null;
-  var editing = false;
 
   /* ---------------- 状态提示 ---------------- */
   function setStatus(text, state) {
@@ -63,7 +62,49 @@
     document.body.classList.toggle('no-scroll', locked);
   }
 
-  /* ---------------- 事件：自动保存 ---------------- */
+  /* ---------------- 事件：序列化 / 保存 ---------------- */
+  function serializeEvent() {
+    var out = '';
+    function walk(node) {
+      if (node.nodeType === 3) {
+        out += node.nodeValue;
+        return;
+      }
+      if (node.nodeType !== 1) {
+        return;
+      }
+      if (node.classList && node.classList.contains('data-chip')) {
+        out += '<资料>';
+        return;
+      }
+      if (node.tagName === 'BR') {
+        out += '\n';
+        return;
+      }
+      if (node.tagName === 'DIV' || node.tagName === 'P') {
+        if (out && out.charAt(out.length - 1) !== '\n') {
+          out += '\n';
+        }
+        for (var i = 0; i < node.childNodes.length; i += 1) {
+          walk(node.childNodes[i]);
+        }
+        if (out && out.charAt(out.length - 1) !== '\n') {
+          out += '\n';
+        }
+        return;
+      }
+      for (var j = 0; j < node.childNodes.length; j += 1) {
+        walk(node.childNodes[j]);
+      }
+    }
+    if (editor) {
+      for (var i = 0; i < editor.childNodes.length; i += 1) {
+        walk(editor.childNodes[i]);
+      }
+    }
+    return out;
+  }
+
   var saveTimer = null;
   var pending = false;
   var saving = false;
@@ -86,7 +127,7 @@
     saving = true;
     pending = false;
     setStatus('保存中…', '');
-    var value = textarea.value;
+    var value = serializeEvent();
     fetch(apiBase, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -99,7 +140,7 @@
         return response.json();
       })
       .then(function (data) {
-        if (textarea.value === value) {
+        if (serializeEvent() === value) {
           setStatus('已保存' + (data.time_label ? ' ' + data.time_label : ''), 'is-saved');
         } else {
           pending = true;
@@ -119,14 +160,36 @@
       });
   }
 
-  /* ---------------- 事件：浏览 / 编辑 ---------------- */
-  function tokenCount(text) {
-    var matches = String(text || '').match(/<资料>/g);
-    return matches ? matches.length : 0;
-  }
-
+  /* ---------------- 资料标签与分组 ---------------- */
   function imagesIn(slot) {
     return imagesBySlot[slot] || [];
+  }
+
+  function chipLabel(slot) {
+    var count = imagesIn(slot).length;
+    return count ? '资料 ' + count : '资料';
+  }
+
+  function createChip() {
+    var chip = document.createElement('span');
+    chip.className = 'data-chip';
+    chip.contentEditable = 'false';
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('tabindex', '0');
+    chip.textContent = '资料';
+    chip.title = '点击打开这组资料截图';
+    chip.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      openDataModal(Number(chip.dataset.slot), chip);
+    });
+    chip.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openDataModal(Number(chip.dataset.slot), chip);
+      }
+    });
+    return chip;
   }
 
   function orphanImages() {
@@ -139,114 +202,187 @@
     return result;
   }
 
-  function chipLabel(slot) {
-    var count = imagesIn(slot).length;
-    return count ? '资料 ' + count : '资料';
-  }
-
-  function makeChip(slot, label) {
-    var chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'data-chip';
-    chip.dataset.slot = String(slot);
-    chip.textContent = label || chipLabel(slot);
-    chip.title = '点击打开这组资料截图';
-    chip.addEventListener('click', function () {
-      openDataModal(slot, chip);
-    });
-    return chip;
-  }
-
-  function makeOrphanChip(count) {
+  function renderOrphans() {
+    if (!orphanBar || !orphanChips) {
+      return;
+    }
+    var orphans = orphanImages();
+    orphanChips.textContent = '';
+    orphanBar.hidden = orphans.length === 0;
+    if (!orphans.length) {
+      return;
+    }
     var chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'data-chip data-chip-orphan';
-    chip.textContent = '未归类资料 ' + count;
+    chip.textContent = '未归类资料 ' + orphans.length;
     chip.title = '这些截图还没有对应的 <资料>；在事件里加一个 <资料> 即可归入';
     chip.addEventListener('click', function () {
       openDataModal('orphan', chip);
     });
-    return chip;
+    orphanChips.appendChild(chip);
   }
 
-  function renderEventView() {
-    var text = (textarea.value || '').replace(/\r\n/g, '\n');
-    currentTokenCount = tokenCount(text);
-    eventView.textContent = '';
-
-    var slot = 0;
-    if (!text.trim()) {
-      var empty = document.createElement('p');
-      empty.className = 'event-empty';
-      empty.textContent = '还没有事件，点击「编辑」记录今天要做的事。';
-      eventView.appendChild(empty);
-    } else {
-      text.split('\n').forEach(function (line) {
-        var row = document.createElement('div');
-        row.className = 'event-line';
-        var parts = line.split('<资料>');
-        parts.forEach(function (part, index) {
-          if (index > 0) {
-            row.appendChild(makeChip(slot));
-            slot += 1;
-          }
-          if (part) {
-            row.appendChild(document.createTextNode(part));
-          }
-        });
-        if (!row.childNodes.length) {
-          row.appendChild(document.createTextNode('\u00a0'));
-        }
-        eventView.appendChild(row);
-      });
-
-      var orphans = orphanImages();
-      if (orphans.length) {
-        var orphanRow = document.createElement('div');
-        orphanRow.className = 'event-line orphan-line';
-        var orphanLabel = document.createElement('span');
-        orphanLabel.className = 'orphan-label';
-        orphanLabel.textContent = '未归类资料';
-        orphanRow.appendChild(orphanLabel);
-        orphanRow.appendChild(makeOrphanChip(orphans.length));
-        eventView.appendChild(orphanRow);
-      }
-    }
-  }
-
-  function setEditing(on, focus) {
-    editing = on;
-    textarea.hidden = !on;
-    eventView.hidden = on;
-    eventHint.hidden = !on;
-    insertBtn.hidden = !on;
-    editBtn.textContent = on ? '完成' : '编辑';
-    if (on) {
-      if (focus) {
-        textarea.focus();
-        var length = textarea.value.length;
-        textarea.setSelectionRange(length, length);
-      }
+  function refreshChips() {
+    if (!editor) {
       return;
     }
+    var chips = editor.querySelectorAll('.data-chip');
+    currentTokenCount = chips.length;
+    for (var i = 0; i < chips.length; i += 1) {
+      chips[i].dataset.slot = String(i);
+      chips[i].textContent = chipLabel(i);
+      chips[i].title = '点击打开这组资料截图';
+    }
+    renderOrphans();
+  }
+
+  function renderEventContent(text) {
+    editor.textContent = '';
+    var slot = 0;
+    var lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+    lines.forEach(function (line, lineIndex) {
+      if (lineIndex > 0) {
+        editor.appendChild(document.createElement('br'));
+      }
+      line.split('<资料>').forEach(function (part, index) {
+        if (index > 0) {
+          editor.appendChild(createChip());
+          slot += 1;
+        }
+        if (part) {
+          editor.appendChild(document.createTextNode(part));
+        }
+      });
+    });
+    refreshChips();
+  }
+
+  function convertAllTokens() {
+    if (!editor) {
+      return;
+    }
+    var walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      if (text.indexOf('<资料>') === -1) {
+        return;
+      }
+      var parts = text.split('<资料>');
+      var fragment = document.createDocumentFragment();
+      parts.forEach(function (part, index) {
+        if (index > 0) {
+          fragment.appendChild(createChip());
+        }
+        if (part) {
+          fragment.appendChild(document.createTextNode(part));
+        }
+      });
+      node.parentNode.replaceChild(fragment, node);
+    });
+    refreshChips();
+  }
+
+  function convertTokenAtCaret() {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) {
+      return;
+    }
+    var node = sel.anchorNode;
+    if (!node || node.nodeType !== 3 || !editor.contains(node)) {
+      return;
+    }
+    var offset = sel.anchorOffset;
+    var text = node.nodeValue;
+    if (offset < 4 || text.slice(offset - 4, offset) !== '<资料>') {
+      return;
+    }
+    var parentNode = node.parentNode;
+    node.nodeValue = text.slice(0, offset - 4);
+    var chip = createChip();
+    var afterNode = document.createTextNode(text.slice(offset));
+    parentNode.insertBefore(afterNode, node.nextSibling);
+    parentNode.insertBefore(chip, afterNode);
+    if (!node.nodeValue) {
+      parentNode.removeChild(node);
+    }
+    var range = document.createRange();
+    range.setStartAfter(chip);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    refreshChips();
+  }
+
+  function insertChipAtCaret() {
+    if (!editor) {
+      return;
+    }
+    editor.focus();
+    var sel = window.getSelection();
+    var range;
+    if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) {
+      range = sel.getRangeAt(0);
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    var chip = createChip();
+    range.insertNode(chip);
+    var newRange = document.createRange();
+    newRange.setStartAfter(chip);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    refreshChips();
+    queueSave();
+  }
+
+  /* ---------------- 事件：自动保存事件 ---------------- */
+  editor.addEventListener('input', function () {
+    queueSave();
+    convertTokenAtCaret();
+    window.setTimeout(refreshChips, 0);
+  });
+  editor.addEventListener('blur', function () {
+    convertAllTokens();
     saveNow();
-    renderEventView();
-  }
+  });
+  editor.addEventListener('paste', function (event) {
+    if (event.clipboardData && event.clipboardData.files && event.clipboardData.files.length) {
+      return; // 图片粘贴走弹窗里的上传逻辑
+    }
+    var text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+    if (!text) {
+      return;
+    }
+    event.preventDefault();
+    var parts = text.replace(/\r\n/g, '\n').split('\n');
+    parts.forEach(function (part, index) {
+      if (index > 0) {
+        document.execCommand('insertLineBreak');
+      }
+      if (part) {
+        document.execCommand('insertText', false, part);
+      }
+    });
+    queueSave();
+  });
+  editor.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      document.execCommand('insertLineBreak');
+      queueSave();
+    }
+  });
+  insertBtn.addEventListener('click', insertChipAtCaret);
 
-  function insertToken() {
-    var start = textarea.selectionStart || 0;
-    var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
-    var value = textarea.value;
-    var token = '<资料>';
-    textarea.value = value.slice(0, start) + token + value.slice(end);
-    var caret = start + token.length;
-    textarea.focus();
-    textarea.setSelectionRange(caret, caret);
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  textarea.addEventListener('input', queueSave);
-  textarea.addEventListener('blur', saveNow);
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') {
       saveNow();
@@ -260,18 +396,13 @@
       fetch(apiBase, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: textarea.value }),
+        body: JSON.stringify({ event: serializeEvent() }),
         keepalive: true
       });
     } catch (err) {
       /* 忽略离开页面时的保存失败 */
     }
   });
-
-  editBtn.addEventListener('click', function () {
-    setEditing(!editing, !editing);
-  });
-  insertBtn.addEventListener('click', insertToken);
 
   /* ---------------- 资料弹窗 ---------------- */
   function openDataModal(slot, opener) {
@@ -307,9 +438,7 @@
   }
 
   function refreshAfterImagesChange() {
-    if (!editing) {
-      renderEventView();
-    }
+    refreshChips();
     if (!dataModal.hidden) {
       renderShots();
     }
@@ -518,10 +647,8 @@
     activeShot = null;
     if (!dataModal.hidden) {
       dataClose.focus();
-    } else if (!textarea.hidden) {
-      textarea.focus();
-    } else if (editBtn) {
-      editBtn.focus();
+    } else if (editor) {
+      editor.focus();
     }
   }
 
@@ -590,9 +717,8 @@
     }
   });
 
-  /* 初始化 */
-  setEditing(!textarea.value.trim(), false);
-  renderEventView();
+  /* ---------------- 初始化 ---------------- */
+  renderEventContent(initialEvent);
   updateImagesFromServer();
 
   function updateImagesFromServer() {
@@ -612,7 +738,10 @@
           }
           imagesBySlot[slot].push(image);
         });
-        refreshAfterImagesChange();
+        refreshChips();
+        if (!dataModal.hidden) {
+          renderShots();
+        }
       })
       .catch(function () {
         /* 读取失败时保持空状态，不阻塞页面 */

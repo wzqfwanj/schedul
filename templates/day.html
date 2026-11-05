@@ -16,17 +16,17 @@
       <h2>事件</h2>
       <div class="block-actions">
         <span id="save-status" class="status" aria-live="polite"></span>
-        <button id="insert-data" class="text-btn" type="button" hidden>插入资料</button>
-        <button id="edit-event" class="text-btn" type="button">编辑</button>
+        <button id="insert-data" class="text-btn" type="button">插入资料</button>
       </div>
     </div>
-    <div id="event-view" class="event-view"{% if not event %} hidden{% endif %}></div>
-    <textarea id="event-input" class="event-input" maxlength="20000" spellcheck="false"
-      aria-label="当天事件"
-      placeholder="写下今天要做的事…（输入 &lt;资料&gt; 后点击标签即可放截图）"{% if event %} hidden{% endif %}>{{ event }}</textarea>
-    <p id="event-hint" class="edit-hint"{% if event %} hidden{% endif %}>
-      输入 &lt;资料&gt; 会变成一个可点击的「资料」标签；点击「完成」后，再点标签就能往这组资料里放截图。
-    </p>
+    <div id="event-editor" class="event-editor" contenteditable="true" role="textbox"
+      aria-multiline="true" aria-label="当天事件" spellcheck="false"
+      data-placeholder="写下今天要做的事… 输入 &lt;资料&gt; 会变成可点击的标签">{{ event }}</div>
+    <p class="edit-hint">直接点击文字即可编辑；输入 &lt;资料&gt; 或点「插入资料」，会变成可点击的资料标签，点开后再放截图。</p>
+    <div id="orphan-bar" class="orphan-bar" hidden>
+      <span class="orphan-label">未归类资料</span>
+      <span id="orphan-chips"></span>
+    </div>
   </section>
 </div>
 
