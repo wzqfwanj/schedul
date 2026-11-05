@@ -134,8 +134,10 @@ class SchedulTestCase(unittest.TestCase):
         # 事件浏览态、资料标签与截图弹窗的挂载点
         self.assertIn('id="event-view"', html)
         self.assertIn('id="edit-event"', html)
-        self.assertIn('id="data-btn"', html)
+        self.assertIn('id="insert-data"', html)
         self.assertIn('id="data-modal"', html)
+        self.assertIn('id="shots"', html)
+        self.assertNotIn('id="data-block"', html)
         self.assertIn("&lt;资料&gt;", html)
 
     def test_invalid_date(self):
@@ -266,6 +268,39 @@ class SchedulTestCase(unittest.TestCase):
         self.assertEqual(garbage.status_code, 415)
         empty = self.client.post(f"/api/days/{DATE}/images", data=b"")
         self.assertEqual(empty.status_code, 400)
+
+    def test_image_belongs_to_slot(self):
+        self.login_ok()
+        first = self.client.post(
+            f"/api/days/{DATE}/images?slot=0",
+            data=PNG_1X1,
+            headers={"Content-Type": "image/png"},
+        )
+        second = self.client.post(
+            f"/api/days/{DATE}/images?slot=2",
+            data=PNG_1X1,
+            headers={"Content-Type": "image/png"},
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(first.get_json()["image"]["slot"], 0)
+        self.assertEqual(second.get_json()["image"]["slot"], 2)
+
+        images = self.client.get(f"/api/days/{DATE}").get_json()["images"]
+        self.assertEqual([image["slot"] for image in images], [0, 2])
+
+        bad = self.client.post(
+            f"/api/days/{DATE}/images?slot=abc",
+            data=PNG_1X1,
+            headers={"Content-Type": "image/png"},
+        )
+        self.assertEqual(bad.status_code, 400)
+        too_large = self.client.post(
+            f"/api/days/{DATE}/images?slot=100",
+            data=PNG_1X1,
+            headers={"Content-Type": "image/png"},
+        )
+        self.assertEqual(too_large.status_code, 400)
 
     def test_image_upload_rejects_header_only_file(self):
         self.login_ok()

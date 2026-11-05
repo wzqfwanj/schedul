@@ -16,7 +16,6 @@
       <h2>事件</h2>
       <div class="block-actions">
         <span id="save-status" class="status" aria-live="polite"></span>
-        <button id="data-btn" class="text-btn" type="button">资料</button>
         <button id="insert-data" class="text-btn" type="button" hidden>插入资料</button>
         <button id="edit-event" class="text-btn" type="button">编辑</button>
       </div>
@@ -24,30 +23,10 @@
     <div id="event-view" class="event-view"{% if not event %} hidden{% endif %}></div>
     <textarea id="event-input" class="event-input" maxlength="20000" spellcheck="false"
       aria-label="当天事件"
-      placeholder="写下今天要做的事…（输入 &lt;资料&gt; 会变成可点击的资料按钮）"{% if event %} hidden{% endif %}>{{ event }}</textarea>
-    <p id="event-hint" class="edit-hint"{% if event %} hidden{% endif %}>输入 &lt;资料&gt; 会显示为可点击的资料按钮，点击「完成」查看效果。</p>
-  </section>
-
-  <section class="block" id="data-block">
-    <div class="block-head">
-      <h2>其他</h2>
-      <span id="shots-status" class="status" aria-live="polite"></span>
-    </div>
-    <div id="paste-zone" class="paste-zone" tabindex="0" role="button" aria-label="粘贴或选择截图">
-      <p class="paste-hint"><kbd>Ctrl</kbd> + <kbd>V</kbd> 粘贴截图</p>
-      <p class="paste-sub">PNG / JPG / GIF / WebP · 最大 10MB · 点击选择文件</p>
-      <input id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
-      <div id="shots" class="shots">
-        {% for image in images %}
-        <figure class="shot" data-id="{{ image.id }}" data-src="{{ image.url }}" data-download="{{ image.download_url }}" data-time="{{ image.time_label }}" title="点击查看">
-          <img src="{{ image.url }}" alt="截图 {{ image.time_label }}" loading="lazy">
-          <button class="shot-del" type="button" aria-label="删除截图" title="删除">×</button>
-          <figcaption>{{ image.time_label }} · {{ image.size_label }}</figcaption>
-        </figure>
-        {% endfor %}
-      </div>
-      <p id="shots-empty" class="empty"{% if images %} hidden{% endif %}>还没有截图，粘贴的图片会出现在这里</p>
-    </div>
+      placeholder="写下今天要做的事…（输入 &lt;资料&gt; 后点击标签即可放截图）"{% if event %} hidden{% endif %}>{{ event }}</textarea>
+    <p id="event-hint" class="edit-hint"{% if event %} hidden{% endif %}>
+      输入 &lt;资料&gt; 会变成一个可点击的「资料」标签；点击「完成」后，再点标签就能往这组资料里放截图。
+    </p>
   </section>
 </div>
 
@@ -56,11 +35,17 @@
     <div class="modal-head">
       <h2 id="data-modal-title">资料</h2>
       <div class="modal-head-actions">
-        <span id="shots-status-modal" class="status" aria-live="polite"></span>
+        <span id="shots-status" class="status" aria-live="polite"></span>
         <button id="data-close" class="icon-btn" type="button" aria-label="关闭资料">×</button>
       </div>
     </div>
-    <div id="data-modal-body"></div>
+    <div id="paste-zone" class="paste-zone" tabindex="0" role="button" aria-label="粘贴或选择截图">
+      <p class="paste-hint"><kbd>Ctrl</kbd> + <kbd>V</kbd> 粘贴截图</p>
+      <p class="paste-sub">PNG / JPG / GIF / WebP · 最大 10MB · 点击选择文件</p>
+      <input id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+      <div id="shots" class="shots"></div>
+      <p id="shots-empty" class="empty">还没有截图，粘贴的图片会出现在这里</p>
+    </div>
   </div>
 </div>
 {% endblock %}

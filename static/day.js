@@ -13,27 +13,19 @@
 
   var textarea = document.getElementById('event-input');
   var statusEl = document.getElementById('save-status');
-  var shotsStatusEl = document.getElementById('shots-status');
-  var modalStatusEl = document.getElementById('shots-status-modal');
   var eventView = document.getElementById('event-view');
   var eventHint = document.getElementById('event-hint');
   var editBtn = document.getElementById('edit-event');
-  var dataBtn = document.getElementById('data-btn');
   var insertBtn = document.getElementById('insert-data');
+
+  var dataModal = document.getElementById('data-modal');
+  var dataTitle = document.getElementById('data-modal-title');
+  var dataClose = document.getElementById('data-close');
+  var shotsStatusEl = document.getElementById('shots-status');
   var zone = document.getElementById('paste-zone');
   var shotsEl = document.getElementById('shots');
   var emptyEl = document.getElementById('shots-empty');
   var fileInput = document.getElementById('file-input');
-
-  var dataModal = document.getElementById('data-modal');
-  var dataModalBody = document.getElementById('data-modal-body');
-  var dataClose = document.getElementById('data-close');
-  var dataBlock = document.getElementById('data-block');
-  var dataHome = {
-    parent: dataBlock.parentNode,
-    next: dataBlock.nextSibling
-  };
-  var modalOpener = null;
 
   var lightbox = document.getElementById('lightbox');
   var lightboxImg = document.getElementById('lightbox-img');
@@ -43,6 +35,10 @@
   var lightboxClose = document.getElementById('lightbox-close');
   var activeShot = null;
 
+  var imagesBySlot = {};
+  var currentSlot = 0;
+  var currentTokenCount = 0;
+  var modalOpener = null;
   var editing = false;
 
   /* ---------------- 状态提示 ---------------- */
@@ -55,14 +51,11 @@
   }
 
   function setShotsStatus(text, state) {
-    var targets = [shotsStatusEl, modalStatusEl];
-    for (var i = 0; i < targets.length; i += 1) {
-      if (!targets[i]) {
-        continue;
-      }
-      targets[i].textContent = text || '';
-      targets[i].className = 'status' + (state ? ' ' + state : '');
+    if (!shotsStatusEl) {
+      return;
     }
+    shotsStatusEl.textContent = text || '';
+    shotsStatusEl.className = 'status' + (state ? ' ' + state : '');
   }
 
   function syncScrollLock() {
@@ -127,67 +120,98 @@
   }
 
   /* ---------------- 事件：浏览 / 编辑 ---------------- */
-  function imageCount() {
-    return shotsEl.querySelectorAll('.shot:not(.is-uploading)').length;
+  function tokenCount(text) {
+    var matches = String(text || '').match(/<资料>/g);
+    return matches ? matches.length : 0;
   }
 
-  function chipLabel() {
-    var count = imageCount();
+  function imagesIn(slot) {
+    return imagesBySlot[slot] || [];
+  }
+
+  function orphanImages() {
+    var result = [];
+    Object.keys(imagesBySlot).forEach(function (key) {
+      if (Number(key) >= currentTokenCount) {
+        result = result.concat(imagesBySlot[key]);
+      }
+    });
+    return result;
+  }
+
+  function chipLabel(slot) {
+    var count = imagesIn(slot).length;
     return count ? '资料 ' + count : '资料';
   }
 
-  function syncChips() {
-    var chips = eventView.querySelectorAll('.data-chip');
-    for (var i = 0; i < chips.length; i += 1) {
-      chips[i].textContent = chipLabel();
-      chips[i].title = '打开资料截图';
-    }
-    if (dataBtn) {
-      dataBtn.textContent = chipLabel();
-      dataBtn.title = '打开资料截图';
-    }
-  }
-
-  function createChip() {
+  function makeChip(slot, label) {
     var chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'data-chip';
-    chip.textContent = chipLabel();
-    chip.title = '打开资料截图';
+    chip.dataset.slot = String(slot);
+    chip.textContent = label || chipLabel(slot);
+    chip.title = '点击打开这组资料截图';
     chip.addEventListener('click', function () {
-      openDataModal(chip);
+      openDataModal(slot, chip);
+    });
+    return chip;
+  }
+
+  function makeOrphanChip(count) {
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'data-chip data-chip-orphan';
+    chip.textContent = '未归类资料 ' + count;
+    chip.title = '这些截图还没有对应的 <资料>；在事件里加一个 <资料> 即可归入';
+    chip.addEventListener('click', function () {
+      openDataModal('orphan', chip);
     });
     return chip;
   }
 
   function renderEventView() {
     var text = (textarea.value || '').replace(/\r\n/g, '\n');
+    currentTokenCount = tokenCount(text);
     eventView.textContent = '';
+
+    var slot = 0;
     if (!text.trim()) {
       var empty = document.createElement('p');
       empty.className = 'event-empty';
       empty.textContent = '还没有事件，点击「编辑」记录今天要做的事。';
       eventView.appendChild(empty);
-      return;
-    }
-    text.split('\n').forEach(function (line) {
-      var row = document.createElement('div');
-      row.className = 'event-line';
-      var parts = line.split('<资料>');
-      parts.forEach(function (part, index) {
-        if (index > 0) {
-          row.appendChild(createChip());
+    } else {
+      text.split('\n').forEach(function (line) {
+        var row = document.createElement('div');
+        row.className = 'event-line';
+        var parts = line.split('<资料>');
+        parts.forEach(function (part, index) {
+          if (index > 0) {
+            row.appendChild(makeChip(slot));
+            slot += 1;
+          }
+          if (part) {
+            row.appendChild(document.createTextNode(part));
+          }
+        });
+        if (!row.childNodes.length) {
+          row.appendChild(document.createTextNode('\u00a0'));
         }
-        if (part) {
-          row.appendChild(document.createTextNode(part));
-        }
+        eventView.appendChild(row);
       });
-      if (!row.childNodes.length) {
-        row.appendChild(document.createTextNode('\u00a0'));
+
+      var orphans = orphanImages();
+      if (orphans.length) {
+        var orphanRow = document.createElement('div');
+        orphanRow.className = 'event-line orphan-line';
+        var orphanLabel = document.createElement('span');
+        orphanLabel.className = 'orphan-label';
+        orphanLabel.textContent = '未归类资料';
+        orphanRow.appendChild(orphanLabel);
+        orphanRow.appendChild(makeOrphanChip(orphans.length));
+        eventView.appendChild(orphanRow);
       }
-      eventView.appendChild(row);
-    });
-    syncChips();
+    }
   }
 
   function setEditing(on, focus) {
@@ -250,15 +274,13 @@
   insertBtn.addEventListener('click', insertToken);
 
   /* ---------------- 资料弹窗 ---------------- */
-  function openDataModal(opener) {
-    if (!dataModal.hidden) {
-      return;
-    }
-    modalOpener = opener || dataBtn;
-    dataModalBody.appendChild(dataBlock);
+  function openDataModal(slot, opener) {
+    currentSlot = slot;
+    modalOpener = opener || null;
+    dataTitle.textContent = slot === 'orphan' ? '未归类资料' : '资料';
+    renderShots();
     dataModal.hidden = false;
     syncScrollLock();
-    updateEmpty();
     dataClose.focus();
   }
 
@@ -266,7 +288,6 @@
     if (dataModal.hidden) {
       return;
     }
-    dataHome.parent.insertBefore(dataBlock, dataHome.next);
     dataModal.hidden = true;
     syncScrollLock();
     if (modalOpener && document.contains(modalOpener)) {
@@ -275,9 +296,25 @@
     modalOpener = null;
   }
 
-  dataBtn.addEventListener('click', function () {
-    openDataModal(dataBtn);
-  });
+  function renderShots() {
+    var list = currentSlot === 'orphan' ? orphanImages() : imagesIn(currentSlot);
+    shotsEl.textContent = '';
+    list.forEach(function (image) {
+      shotsEl.appendChild(buildShot(image));
+    });
+    emptyEl.hidden = list.length > 0;
+    setShotsStatus('', '');
+  }
+
+  function refreshAfterImagesChange() {
+    if (!editing) {
+      renderEventView();
+    }
+    if (!dataModal.hidden) {
+      renderShots();
+    }
+  }
+
   dataClose.addEventListener('click', closeDataModal);
   dataModal.addEventListener('click', function (event) {
     if (event.target === dataModal) {
@@ -286,14 +323,6 @@
   });
 
   /* ---------------- 截图 ---------------- */
-  function updateEmpty() {
-    if (!emptyEl) {
-      return;
-    }
-    emptyEl.hidden = !!shotsEl.querySelector('.shot');
-    syncChips();
-  }
-
   function formatSize(bytes) {
     if (!bytes && bytes !== 0) {
       return '';
@@ -311,6 +340,7 @@
     var figure = document.createElement('figure');
     figure.className = 'shot';
     figure.dataset.id = image.id;
+    figure.dataset.slot = image.slot;
     figure.dataset.src = image.url;
     figure.dataset.download = image.download_url;
     figure.dataset.time = image.time_label;
@@ -342,10 +372,14 @@
     if (!file || !file.type || file.type.indexOf('image/') !== 0) {
       return;
     }
+    if (dataModal.hidden) {
+      return;
+    }
     if (file.size > MAX_UPLOAD) {
       setShotsStatus('截图不能超过 10MB', 'is-error');
       return;
     }
+    var targetSlot = currentSlot === 'orphan' ? currentTokenCount : Number(currentSlot);
     var placeholder = document.createElement('figure');
     placeholder.className = 'shot is-uploading';
     var label = document.createElement('div');
@@ -353,10 +387,10 @@
     label.textContent = '上传中…';
     placeholder.appendChild(label);
     shotsEl.appendChild(placeholder);
-    updateEmpty();
+    emptyEl.hidden = true;
     setShotsStatus('正在上传截图…', '');
 
-    fetch(apiBase + '/images', {
+    fetch(apiBase + '/images?slot=' + targetSlot, {
       method: 'POST',
       headers: { 'Content-Type': file.type },
       body: file
@@ -371,13 +405,16 @@
       })
       .then(function (data) {
         placeholder.remove();
-        shotsEl.appendChild(buildShot(data.image));
-        updateEmpty();
+        if (!imagesBySlot[targetSlot]) {
+          imagesBySlot[targetSlot] = [];
+        }
+        imagesBySlot[targetSlot].push(data.image);
+        refreshAfterImagesChange();
         setShotsStatus('截图已保存', 'is-saved');
       })
       .catch(function (err) {
         placeholder.remove();
-        updateEmpty();
+        refreshAfterImagesChange();
         setShotsStatus('截图上传失败：' + err.message, 'is-error');
       });
   }
@@ -387,6 +424,9 @@
   }
 
   document.addEventListener('paste', function (event) {
+    if (dataModal.hidden) {
+      return;
+    }
     var clipboard = event.clipboardData;
     if (!clipboard || !clipboard.items) {
       return;
@@ -497,8 +537,14 @@
         if (activeShot && activeShot.figure === figure) {
           closeLightbox();
         }
+        var imageId = Number(figure.dataset.id);
+        Object.keys(imagesBySlot).forEach(function (key) {
+          imagesBySlot[key] = imagesBySlot[key].filter(function (image) {
+            return Number(image.id) !== imageId;
+          });
+        });
         figure.remove();
-        updateEmpty();
+        refreshAfterImagesChange();
         setShotsStatus('截图已删除', 'is-saved');
       })
       .catch(function (err) {
@@ -546,5 +592,30 @@
 
   /* 初始化 */
   setEditing(!textarea.value.trim(), false);
-  updateEmpty();
+  renderEventView();
+  updateImagesFromServer();
+
+  function updateImagesFromServer() {
+    fetch(apiBase, { headers: { Accept: 'application/json' } })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error('HTTP ' + response.status);
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        imagesBySlot = {};
+        (data.images || []).forEach(function (image) {
+          var slot = typeof image.slot === 'number' ? image.slot : 0;
+          if (!imagesBySlot[slot]) {
+            imagesBySlot[slot] = [];
+          }
+          imagesBySlot[slot].push(image);
+        });
+        refreshAfterImagesChange();
+      })
+      .catch(function () {
+        /* 读取失败时保持空状态，不阻塞页面 */
+      });
+  }
 })();

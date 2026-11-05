@@ -215,6 +215,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                 CREATE TABLE IF NOT EXISTS images (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
                     date       TEXT NOT NULL,
+                    slot       INTEGER NOT NULL DEFAULT 0,
                     filename   TEXT NOT NULL,
                     mime       TEXT NOT NULL,
                     size       INTEGER NOT NULL,
@@ -223,6 +224,12 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                 CREATE INDEX IF NOT EXISTS idx_images_date ON images(date);
                 """
             )
+            # 兼容旧库：早期版本没有 slot 字段，所有截图默认归到第一个 <资料>
+            columns = [row[1] for row in connection.execute("PRAGMA table_info(images)")]
+            if "slot" not in columns:
+                connection.execute(
+                    "ALTER TABLE images ADD COLUMN slot INTEGER NOT NULL DEFAULT 0"
+                )
             connection.commit()
         finally:
             connection.close()
@@ -273,6 +280,8 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         url = url_for("uploaded_file", date_str=row["date"], name=row["filename"])
         return {
             "id": row["id"],
+            "date": row["date"],
+            "slot": row["slot"],
             "url": url,
             "download_url": url + "?download=1",
             "mime": row["mime"],
@@ -448,6 +457,10 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
     def api_upload_image(date_str: str):
         if _valid_date(date_str) is None:
             return jsonify({"error": "无效日期"}), 404
+        slot_raw = request.args.get("slot", "0")
+        if not slot_raw.isdigit() or not 0 <= int(slot_raw) <= 99:
+            return jsonify({"error": "资料位置无效"}), 400
+        slot = int(slot_raw)
         if request.content_length is not None and request.content_length > MAX_UPLOAD_BYTES:
             return jsonify({"error": "图片不能超过 10MB"}), 413
         data = request.get_data(cache=False)
@@ -470,8 +483,8 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         created_at = _iso_now()
         db = get_db()
         cursor = db.execute(
-            "INSERT INTO images(date, filename, mime, size, created_at) VALUES (?, ?, ?, ?, ?)",
-            (date_str, filename, mime, len(data), created_at),
+            "INSERT INTO images(date, slot, filename, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (date_str, slot, filename, mime, len(data), created_at),
         )
         db.commit()
         row = db.execute("SELECT * FROM images WHERE id = ?", (cursor.lastrowid,)).fetchone()
