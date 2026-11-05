@@ -35,9 +35,9 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 
 - **月历一览**：周一开头的月视图，可切换上/下月、「今天」；有事件或截图的日期显示圆点。
 - **事件浏览 / 编辑**：有事件时默认以浏览态逐行展示，点「编辑」回到文本框；停止输入 600ms 自动保存（失焦、切到后台、离开页面也会保存，失败自动重试），无需点按钮。
-- **资料标签**：在事件里写 `<资料>`，浏览态会渲染成可点击的「资料 N」标签；点标签（或顶部「资料」按钮）弹出当天的截图收纳框，N 为当天截图数量。
-- **截图收纳**：在收纳框里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。关闭弹窗后收纳框会回到当天页下方。
-- **截图管理**：缩略图网格；点击查看大图（灯箱），可下载原图或删除（删除前确认，`Esc` 关闭灯箱/弹窗）。
+- **资料标签**：在事件里写 `<资料>`，浏览态会渲染成可点击的「资料 N」标签；每个标签有自己独立的一组截图，点标签弹出该组的截图收纳框，N 为该组截图数量。
+- **截图收纳**：点开资料标签后，在弹窗里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。收起弹窗后截图仍在对应标签里。
+- **截图管理**：每组资料的缩略图网格；点击查看大图（灯箱），可下载原图或删除（删除前确认，`Esc` 关闭灯箱/弹窗）。如果事件里暂时没有对应标签，旧截图会显示为「未归类资料」，补一个 `<资料>` 即自动归入。
 - **黑白双主题**：首次访问跟随系统深浅色，右上角 ◐ 手动切换并记住选择。
 - **单账号登录**：账号密码登录，会话 Cookie `HttpOnly` + `SameSite=Lax`，有效期 30 天；同一 IP 连续失败会触发临时限流。
 - **安全优先**：上传按文件头识别类型（仅 PNG / JPG / GIF / WebP，拒绝 SVG）、随机文件名、路径穿越防护、CSP 等安全响应头。
@@ -128,7 +128,7 @@ waitress-serve --listen=127.0.0.1:8000 wsgi:app
 
 | 路径 | 内容 |
 | --- | --- |
-| `data/app.db` | SQLite 数据库：`days` 表保存每天的事件文本，`images` 表保存截图元数据 |
+| `data/app.db` | SQLite 数据库：`days` 表保存每天的事件文本，`images` 表保存截图元数据（`slot` 表示属于第几组 `<资料>`） |
 | `data/uploads/<YYYY-MM-DD>/<随机文件名>.<png\|jpg\|gif\|webp>` | 截图原文件，按日期分目录 |
 | `data/secret_key` | 未设置 `SECRET_KEY` 时首次启动自动生成的会话签名密钥（权限 0600），用于签名登录 Cookie |
 
@@ -190,9 +190,9 @@ JSON / 文件 API：
 
 | 方法 | 路径 | 请求 | 成功响应 |
 | --- | --- | --- | --- |
-| `GET` | `/api/days/<YYYY-MM-DD>` | — | `200` `{date, event, updated_at, images[]}`；日期非法 404 |
+| `GET` | `/api/days/<YYYY-MM-DD>` | — | `200` `{date, event, updated_at, images[]}`；每张图含 `slot`（第几组 `<资料>`，从 0 开始）；日期非法 404 |
 | `PUT` | `/api/days/<YYYY-MM-DD>` | JSON：`{"event": "文本"}`，最长 20000 字 | `200` `{ok: true, updated_at, time_label}`；格式/类型/超长 400，日期非法 404 |
-| `POST` | `/api/days/<YYYY-MM-DD>/images` | 原始图片字节（请求体即文件），`Content-Type` 为 `image/png`、`image/jpeg`、`image/gif` 或 `image/webp` | `201` `{"image": {id, url, download_url, mime, size, size_label, created_at, time_label}}`；空请求 400、超 10MB 413、非位图 415 |
+| `POST` | `/api/days/<YYYY-MM-DD>/images?slot=N` | 原始图片字节（请求体即文件）；`slot` 为第几组 `<资料>`（从 0 开始，默认 0，最大 99）；`Content-Type` 为 `image/png`、`image/jpeg`、`image/gif` 或 `image/webp` | `201` `{"image": {id, date, slot, url, download_url, mime, size, size_label, created_at, time_label}}`；空请求 400、slot 非法 400、超 10MB 413、非位图 415 |
 | `DELETE` | `/api/images/<id>` | — | `200` `{ok: true}`；不存在 404 |
 | `GET` | `/uploads/<YYYY-MM-DD>/<文件名>` | 可选 `?download=1` 以附件形式下载 | 返回图片；文件名/日期不合法或不存在 404 |
 
@@ -226,7 +226,7 @@ curl -b cookies.txt -X DELETE http://127.0.0.1:8000/api/images/1
 python -m unittest discover -s tests -v
 ```
 
-当前共 25 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图上传/查看/下载/删除、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
+当前共 26 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图按 `<资料>` 分组上传/查看/下载/删除、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
 
 ## 安全说明
 
