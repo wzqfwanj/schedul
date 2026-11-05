@@ -14,10 +14,26 @@
   var textarea = document.getElementById('event-input');
   var statusEl = document.getElementById('save-status');
   var shotsStatusEl = document.getElementById('shots-status');
+  var modalStatusEl = document.getElementById('shots-status-modal');
+  var eventView = document.getElementById('event-view');
+  var eventHint = document.getElementById('event-hint');
+  var editBtn = document.getElementById('edit-event');
+  var dataBtn = document.getElementById('data-btn');
+  var insertBtn = document.getElementById('insert-data');
   var zone = document.getElementById('paste-zone');
   var shotsEl = document.getElementById('shots');
   var emptyEl = document.getElementById('shots-empty');
   var fileInput = document.getElementById('file-input');
+
+  var dataModal = document.getElementById('data-modal');
+  var dataModalBody = document.getElementById('data-modal-body');
+  var dataClose = document.getElementById('data-close');
+  var dataBlock = document.getElementById('data-block');
+  var dataHome = {
+    parent: dataBlock.parentNode,
+    next: dataBlock.nextSibling
+  };
+  var modalOpener = null;
 
   var lightbox = document.getElementById('lightbox');
   var lightboxImg = document.getElementById('lightbox-img');
@@ -27,12 +43,9 @@
   var lightboxClose = document.getElementById('lightbox-close');
   var activeShot = null;
 
-  /* ---------------- 事件：自动保存 ---------------- */
-  var saveTimer = null;
-  var pending = false;
-  var saving = false;
-  var retryTimer = null;
+  var editing = false;
 
+  /* ---------------- 状态提示 ---------------- */
   function setStatus(text, state) {
     if (!statusEl) {
       return;
@@ -42,18 +55,33 @@
   }
 
   function setShotsStatus(text, state) {
-    if (!shotsStatusEl) {
-      return;
+    var targets = [shotsStatusEl, modalStatusEl];
+    for (var i = 0; i < targets.length; i += 1) {
+      if (!targets[i]) {
+        continue;
+      }
+      targets[i].textContent = text || '';
+      targets[i].className = 'status' + (state ? ' ' + state : '');
     }
-    shotsStatusEl.textContent = text || '';
-    shotsStatusEl.className = 'status' + (state ? ' ' + state : '');
   }
+
+  function syncScrollLock() {
+    var locked = !dataModal.hidden || !lightbox.hidden;
+    document.body.classList.toggle('no-scroll', locked);
+  }
+
+  /* ---------------- 事件：自动保存 ---------------- */
+  var saveTimer = null;
+  var pending = false;
+  var saving = false;
+  var retryTimer = null;
 
   function queueSave() {
     pending = true;
     setStatus('未保存', '');
     clearTimeout(saveTimer);
     clearTimeout(retryTimer);
+    retryTimer = null;
     saveTimer = setTimeout(saveNow, 600);
   }
 
@@ -98,6 +126,101 @@
       });
   }
 
+  /* ---------------- 事件：浏览 / 编辑 ---------------- */
+  function imageCount() {
+    return shotsEl.querySelectorAll('.shot:not(.is-uploading)').length;
+  }
+
+  function chipLabel() {
+    var count = imageCount();
+    return count ? '资料 ' + count : '资料';
+  }
+
+  function syncChips() {
+    var chips = eventView.querySelectorAll('.data-chip');
+    for (var i = 0; i < chips.length; i += 1) {
+      chips[i].textContent = chipLabel();
+      chips[i].title = '打开资料截图';
+    }
+    if (dataBtn) {
+      dataBtn.textContent = chipLabel();
+      dataBtn.title = '打开资料截图';
+    }
+  }
+
+  function createChip() {
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'data-chip';
+    chip.textContent = chipLabel();
+    chip.title = '打开资料截图';
+    chip.addEventListener('click', function () {
+      openDataModal(chip);
+    });
+    return chip;
+  }
+
+  function renderEventView() {
+    var text = (textarea.value || '').replace(/\r\n/g, '\n');
+    eventView.textContent = '';
+    if (!text.trim()) {
+      var empty = document.createElement('p');
+      empty.className = 'event-empty';
+      empty.textContent = '还没有事件，点击「编辑」记录今天要做的事。';
+      eventView.appendChild(empty);
+      return;
+    }
+    text.split('\n').forEach(function (line) {
+      var row = document.createElement('div');
+      row.className = 'event-line';
+      var parts = line.split('<资料>');
+      parts.forEach(function (part, index) {
+        if (index > 0) {
+          row.appendChild(createChip());
+        }
+        if (part) {
+          row.appendChild(document.createTextNode(part));
+        }
+      });
+      if (!row.childNodes.length) {
+        row.appendChild(document.createTextNode('\u00a0'));
+      }
+      eventView.appendChild(row);
+    });
+    syncChips();
+  }
+
+  function setEditing(on, focus) {
+    editing = on;
+    textarea.hidden = !on;
+    eventView.hidden = on;
+    eventHint.hidden = !on;
+    insertBtn.hidden = !on;
+    editBtn.textContent = on ? '完成' : '编辑';
+    if (on) {
+      if (focus) {
+        textarea.focus();
+        var length = textarea.value.length;
+        textarea.setSelectionRange(length, length);
+      }
+      return;
+    }
+    saveNow();
+    renderEventView();
+  }
+
+  function insertToken() {
+    var start = textarea.selectionStart || 0;
+    var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+    var value = textarea.value;
+    var token = '<资料>';
+    textarea.value = value.slice(0, start) + token + value.slice(end);
+    var caret = start + token.length;
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   textarea.addEventListener('input', queueSave);
   textarea.addEventListener('blur', saveNow);
   document.addEventListener('visibilitychange', function () {
@@ -121,12 +244,54 @@
     }
   });
 
+  editBtn.addEventListener('click', function () {
+    setEditing(!editing, !editing);
+  });
+  insertBtn.addEventListener('click', insertToken);
+
+  /* ---------------- 资料弹窗 ---------------- */
+  function openDataModal(opener) {
+    if (!dataModal.hidden) {
+      return;
+    }
+    modalOpener = opener || dataBtn;
+    dataModalBody.appendChild(dataBlock);
+    dataModal.hidden = false;
+    syncScrollLock();
+    updateEmpty();
+    dataClose.focus();
+  }
+
+  function closeDataModal() {
+    if (dataModal.hidden) {
+      return;
+    }
+    dataHome.parent.insertBefore(dataBlock, dataHome.next);
+    dataModal.hidden = true;
+    syncScrollLock();
+    if (modalOpener && document.contains(modalOpener)) {
+      modalOpener.focus();
+    }
+    modalOpener = null;
+  }
+
+  dataBtn.addEventListener('click', function () {
+    openDataModal(dataBtn);
+  });
+  dataClose.addEventListener('click', closeDataModal);
+  dataModal.addEventListener('click', function (event) {
+    if (event.target === dataModal) {
+      closeDataModal();
+    }
+  });
+
   /* ---------------- 截图 ---------------- */
   function updateEmpty() {
     if (!emptyEl) {
       return;
     }
     emptyEl.hidden = !!shotsEl.querySelector('.shot');
+    syncChips();
   }
 
   function formatSize(bytes) {
@@ -302,17 +467,21 @@
     lightboxTime.textContent = '截图 ' + figure.dataset.time;
     lightboxDownload.href = figure.dataset.download;
     lightbox.hidden = false;
-    document.body.classList.add('no-scroll');
+    syncScrollLock();
     lightboxClose.focus();
   }
 
   function closeLightbox() {
     lightbox.hidden = true;
     lightboxImg.removeAttribute('src');
-    document.body.classList.remove('no-scroll');
+    syncScrollLock();
     activeShot = null;
-    if (textarea) {
+    if (!dataModal.hidden) {
+      dataClose.focus();
+    } else if (!textarea.hidden) {
       textarea.focus();
+    } else if (editBtn) {
+      editBtn.focus();
     }
   }
 
@@ -363,10 +532,19 @@
     }
   });
   document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && !lightbox.hidden) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if (!lightbox.hidden) {
       closeLightbox();
+      return;
+    }
+    if (!dataModal.hidden) {
+      closeDataModal();
     }
   });
 
+  /* 初始化 */
+  setEditing(!textarea.value.trim(), false);
   updateEmpty();
 })();
