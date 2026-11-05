@@ -131,6 +131,12 @@ class SchedulTestCase(unittest.TestCase):
         self.assertIn("11月4日", html)
         self.assertIn("星期三", html)
         self.assertIn("粘贴截图", html)
+        # 事件浏览态、资料标签与截图弹窗的挂载点
+        self.assertIn('id="event-view"', html)
+        self.assertIn('id="edit-event"', html)
+        self.assertIn('id="data-btn"', html)
+        self.assertIn('id="data-modal"', html)
+        self.assertIn("&lt;资料&gt;", html)
 
     def test_invalid_date(self):
         self.login_ok()

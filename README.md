@@ -14,9 +14,11 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | :---: | :---: |
 | ![月历 · 浅色](docs/screenshots/calendar-light.png) | ![月历 · 深色](docs/screenshots/calendar-dark.png) |
 
-| 当天 · 浅色 | 当天 · 深色 | 移动端 |
+| 当天 · 浅色 | 当天 · 深色 | 资料弹窗 |
 | :---: | :---: | :---: |
-| ![当天 · 浅色](docs/screenshots/day.png) | ![当天 · 深色](docs/screenshots/day-dark.png) | ![移动端](docs/screenshots/mobile.png) |
+| ![当天 · 浅色](docs/screenshots/day.png) | ![当天 · 深色](docs/screenshots/day-dark.png) | ![资料弹窗](docs/screenshots/data-modal.png) |
+
+![移动端](docs/screenshots/mobile.png)
 
 截图文件位于仓库的 `docs/screenshots/` 目录：
 
@@ -24,16 +26,18 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | --- | --- |
 | `calendar-light.png` | 月历页 · 浅色主题 |
 | `calendar-dark.png` | 月历页 · 深色主题 |
-| `day.png` | 当天页（事件 + 截图）· 浅色主题 |
+| `day.png` | 当天页（事件浏览 + 资料标签）· 浅色主题 |
 | `day-dark.png` | 当天页 · 深色主题 |
+| `data-modal.png` | 点击「资料」标签弹出的截图收纳框 |
 | `mobile.png` | 移动端布局（约 390px 宽） |
 
 ## 功能
 
 - **月历一览**：周一开头的月视图，可切换上/下月、「今天」；有事件或截图的日期显示圆点。
-- **事件自动保存**：在当天页写下内容后自动保存（停止输入 600ms 触发，失焦、切到后台、离开页面也会保存；失败自动重试），无需点按钮。
-- **截图收纳**：鼠标聚焦页面后按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。
-- **截图管理**：缩略图网格；点击查看大图（灯箱），可下载原图或删除（删除前确认，`Esc` 关闭灯箱）。
+- **事件浏览 / 编辑**：有事件时默认以浏览态逐行展示，点「编辑」回到文本框；停止输入 600ms 自动保存（失焦、切到后台、离开页面也会保存，失败自动重试），无需点按钮。
+- **资料标签**：在事件里写 `<资料>`，浏览态会渲染成可点击的「资料 N」标签；点标签（或顶部「资料」按钮）弹出当天的截图收纳框，N 为当天截图数量。
+- **截图收纳**：在收纳框里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。关闭弹窗后收纳框会回到当天页下方。
+- **截图管理**：缩略图网格；点击查看大图（灯箱），可下载原图或删除（删除前确认，`Esc` 关闭灯箱/弹窗）。
 - **黑白双主题**：首次访问跟随系统深浅色，右上角 ◐ 手动切换并记住选择。
 - **单账号登录**：账号密码登录，会话 Cookie `HttpOnly` + `SameSite=Lax`，有效期 30 天；同一 IP 连续失败会触发临时限流。
 - **安全优先**：上传按文件头识别类型（仅 PNG / JPG / GIF / WebP，拒绝 SVG）、随机文件名、路径穿越防护、CSP 等安全响应头。
@@ -222,7 +226,7 @@ curl -b cookies.txt -X DELETE http://127.0.0.1:8000/api/images/1
 python -m unittest discover -s tests -v
 ```
 
-当前共 24 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图上传/查看/下载/删除、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
+当前共 25 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图上传/查看/下载/删除、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
 
 ## 安全说明
 
@@ -274,7 +278,7 @@ python -m unittest discover -s tests -v
 nginx 默认请求体限制很小。确认站点配置中有 `client_max_body_size 12m;`（略大于应用的 10MB 限制），然后 `sudo nginx -t && sudo systemctl reload nginx`。
 
 **README 截图显示不出来**
-确认 `docs/screenshots/` 下的 5 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
+确认 `docs/screenshots/` 下的 6 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
 
 ## 参与贡献
 
