@@ -846,6 +846,11 @@ body.no-scroll {
   font-variant-numeric: tabular-nums;
 }
 
+.ai-time.is-unset {
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .ai-title {
   font-size: 13px;
   overflow-wrap: anywhere;

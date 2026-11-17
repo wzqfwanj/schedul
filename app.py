@@ -181,6 +181,46 @@ def _extract_json_object(text: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _normalize_ai_time(value: str) -> str:
+    """把模型返回的常见时间格式统一成 HH:MM；无法确定时返回空。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.translate(str.maketrans("０１２３４５６７８９：", "0123456789:"))
+
+    # 15:00 / 15:00:00 / 15:00-16:00 / 3:00 PM / 2026-11-17 15:00
+    match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?::\d{2})?(?!\d)", text)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        tail = text[match.end() : match.end() + 4].upper()
+        if "PM" in tail and hour < 12:
+            hour += 12
+        if "AM" in tail and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+
+    # 下午3点 / 上午9点30 / 晚上8点 / 中午12点
+    match = re.search(
+        r"(上午|下午|中午|晚上|凌晨|清晨|早上)?\s*(\d{1,2})\s*[点時时](?:\s*(\d{1,2})\s*分?)?",
+        text,
+    )
+    if match:
+        period = match.group(1) or ""
+        hour = int(match.group(2))
+        minute = int(match.group(3) or 0)
+        if period in {"下午", "晚上"} and hour < 12:
+            hour += 12
+        elif period == "中午" and hour < 11:
+            hour += 12
+        elif period == "凌晨" and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+    return ""
+
+
 def _normalize_ai_events(payload: dict | None) -> list[dict]:
     """校验模型返回的 events，输出干净的 {date,time,title,note} 列表。"""
     if not isinstance(payload, dict):
@@ -196,11 +236,7 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
         date_value = _valid_date(str(raw.get("date") or "").strip())
         if date_value is None:
             continue
-        time_text = str(raw.get("time") or "").strip()
-        match = re.fullmatch(r"(\d{1,2}):(\d{2})", time_text)
-        time_value = ""
-        if match and 0 <= int(match.group(1)) <= 23 and 0 <= int(match.group(2)) <= 59:
-            time_value = f"{int(match.group(1)):02d}:{match.group(2)}"
+        time_value = _normalize_ai_time(str(raw.get("time") or ""))
         title = str(raw.get("title") or "").strip().replace("\n", " ")[:80]
         note = str(raw.get("note") or "").strip().replace("\n", " ")[:100]
         if not title:
@@ -389,9 +425,9 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 只输出严格 JSON，不要 markdown，不要解释：
 {{"events":[{{"date":"YYYY-MM-DD","time":"HH:MM 或空","title":"简短标题","note":"补充信息"}}]}}
 规则：
-1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期。
-2. 只有时间没有日期、且无法从上下文确定日期时，不要输出这一条。
-3. title 用简洁中文，优先包含公司/对象+事项，例如「字节跳动一面」「美团二面」「提交材料」；不要把会议软件名、会议号、链接放进 title。
+1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期；截图完全没有日期时不要输出这一条。
+2. time 必须是截图中真实出现的时间，用 24 小时制 HH:MM；时间段取开始时间（如 15:00-16:00 记 15:00）；截图只有日期、没有具体时间时留空；绝对不要用当前时间填充。
+3. title 用简洁中文，优先包含公司/对象+事项，例如「字节跳动一面」「美团二面」「提交材料」；不要把日期、时间、会议软件名、会议号、链接放进 title。
 4. note 只放会议链接、会议号、地点、需要准备的材料等具体补充信息；没有就留空。
 5. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""
         image_b64 = base64.b64encode(image_bytes).decode("ascii")

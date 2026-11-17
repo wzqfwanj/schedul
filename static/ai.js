@@ -93,8 +93,8 @@
     date.textContent = dateLabel(event.date);
 
     var time = document.createElement('span');
-    time.className = 'ai-time';
-    time.textContent = event.time || '全天';
+    time.className = 'ai-time' + (event.time ? '' : ' is-unset');
+    time.textContent = event.time || '未识别时间';
 
     var title = document.createElement('span');
     title.className = 'ai-title';
@@ -160,6 +160,15 @@
         outside += 1;
       }
     });
+    var noTime = added.filter(function (event) {
+      return !event.time;
+    }).length;
+    if (noTime) {
+      var timeNote = document.createElement('p');
+      timeNote.className = 'ai-more';
+      timeNote.textContent = '有 ' + noTime + ' 条没有识别到具体时间，可以点进去补充。';
+      resultEl.appendChild(timeNote);
+    }
     if (outside) {
       var more = document.createElement('p');
       more.className = 'ai-more';

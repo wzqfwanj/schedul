@@ -408,6 +408,22 @@ class SchedulTestCase(unittest.TestCase):
         )
         self.assertEqual(app_module._ai_event_line(events[1]), "提交材料")
 
+    def test_ai_time_formats(self):
+        cases = {
+            "15:00": "15:00",
+            "15:00:00": "15:00",
+            "15:00-16:00": "15:00",
+            "15：30": "15:30",
+            "2026-11-17 15:00": "15:00",
+            "下午3点": "15:00",
+            "上午9点30分": "09:30",
+            "晚上8点": "20:00",
+            "3:00 PM": "15:00",
+            "没有时间": "",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(app_module._normalize_ai_time(raw), expected, raw)
+
     def test_ai_parse_requires_login(self):
         response = self.client.post(
             "/api/ai/parse", data=PNG_1X1, headers={"Content-Type": "image/png"}
