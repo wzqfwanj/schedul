@@ -17,14 +17,18 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import base64
 import hmac
+import json
 import os
 import posixpath
 import re
 import secrets
 import sqlite3
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 from functools import wraps
 from pathlib import Path
@@ -54,6 +58,9 @@ WEEKDAY_CN = "一二三四五六日"
 _FAILED_LOGINS: dict[str, list[float]] = {}
 _LOGIN_WINDOW = 600
 _LOGIN_MAX_FAILS = 10
+# AI 解析按 IP 简单限频，避免误触/并发导致费用失控
+_AI_LAST_CALL: dict[str, float] = {}
+_AI_MIN_INTERVAL = 2.0
 
 
 def _resolve_tz() -> dt.tzinfo:
@@ -155,6 +162,72 @@ def _size_label(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MB"
 
 
+def _extract_json_object(text: str) -> dict | None:
+    """从模型输出里截取 JSON 对象（兼容 ```json 代码块）。"""
+    if not isinstance(text, str):
+        return None
+    value = text.strip()
+    if value.startswith("```"):
+        value = re.sub(r"^```[A-Za-z0-9_-]*\s*", "", value)
+        value = re.sub(r"\s*```$", "", value)
+    start = value.find("{")
+    end = value.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        payload = json.loads(value[start : end + 1])
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_ai_events(payload: dict | None) -> list[dict]:
+    """校验模型返回的 events，输出干净的 {date,time,title,note} 列表。"""
+    if not isinstance(payload, dict):
+        return []
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list):
+        return []
+    events: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in raw_events[:20]:
+        if not isinstance(raw, dict):
+            continue
+        date_value = _valid_date(str(raw.get("date") or "").strip())
+        if date_value is None:
+            continue
+        time_text = str(raw.get("time") or "").strip()
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", time_text)
+        time_value = ""
+        if match and 0 <= int(match.group(1)) <= 23 and 0 <= int(match.group(2)) <= 59:
+            time_value = f"{int(match.group(1)):02d}:{match.group(2)}"
+        title = str(raw.get("title") or "").strip().replace("\n", " ")[:80]
+        note = str(raw.get("note") or "").strip().replace("\n", " ")[:100]
+        if not title:
+            continue
+        key = (date_value.isoformat(), time_value, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append(
+            {
+                "date": date_value.isoformat(),
+                "time": time_value,
+                "title": title,
+                "note": note,
+            }
+        )
+    return events
+
+
+def _ai_event_line(event: dict) -> str:
+    line = f"{event.get('time', '')} {event.get('title', '')}".strip()
+    note = (event.get("note") or "").strip()
+    if note and note not in {"无", "暂无", "-", "—"}:
+        line = f"{line}（{note[:80]}）"
+    return line[:180]
+
+
 def create_app(data_dir: str | Path | None = None) -> Flask:
     data_dir = Path(data_dir or os.environ.get("DATA_DIR") or BASE_DIR / "data").resolve()
     upload_dir = data_dir / "uploads"
@@ -188,6 +261,12 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=dt.timedelta(days=30),
         APP_USERNAME=os.environ.get("APP_USERNAME", "admin"),
         APP_PASSWORD=os.environ.get("APP_PASSWORD", "admin123"),
+        VISION_API_KEY=os.environ.get("DASHSCOPE_API_KEY", "").strip(),
+        VISION_API_URL=os.environ.get(
+            "VISION_API_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        ).strip(),
+        VISION_MODEL=os.environ.get("VISION_MODEL", "qwen3-vl-plus").strip(),
         DATA_DIR=data_dir,
         UPLOAD_DIR=upload_dir,
         DB_PATH=db_path,
@@ -296,6 +375,73 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             "SELECT * FROM images WHERE date = ? ORDER BY created_at ASC, id ASC",
             (date_iso,),
         ).fetchall()
+
+    def vision_parse(image_bytes: bytes, mime: str) -> list[dict]:
+        """调用视觉模型解析截图，返回校验后的日程列表。"""
+        api_key = str(app.config["VISION_API_KEY"])
+        if not api_key:
+            raise RuntimeError("AI 识别服务未配置")
+        now = dt.datetime.now(tz)
+        weekday = WEEKDAY_CN[now.weekday()]
+        tz_name = os.environ.get("APP_TZ", "Asia/Shanghai")
+        prompt = f"""你是日程截图解析助手。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
+截图可能来自聊天记录、招聘软件、邮件或日历。请提取其中对用户自己有效的日程、面试、会议和待办。
+只输出严格 JSON，不要 markdown，不要解释：
+{{"events":[{{"date":"YYYY-MM-DD","time":"HH:MM 或空","title":"简短标题","note":"补充信息"}}]}}
+规则：
+1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期。
+2. 只有时间没有日期、且无法从上下文确定日期时，不要输出这一条。
+3. title 用简洁中文，优先包含公司/对象+事项，例如「字节跳动一面」「美团二面」「提交材料」；不要把会议软件名、会议号、链接放进 title。
+4. note 只放会议链接、会议号、地点、需要准备的材料等具体补充信息；没有就留空。
+5. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""
+        image_b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": str(app.config["VISION_MODEL"]),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+                        },
+                    ],
+                }
+            ],
+            "temperature": 0,
+        }
+        request_obj = urllib.request.Request(
+            str(app.config["VISION_API_URL"]),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request_obj, timeout=90) as response:
+                raw = response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError(f"AI 服务返回错误（HTTP {exc.code}）：{detail}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError(f"AI 服务连接失败：{exc}") from None
+
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            raise RuntimeError("AI 返回格式异常") from None
+        choices = data.get("choices") or []
+        if not isinstance(choices, list) or not choices:
+            raise RuntimeError("AI 没有返回识别结果")
+        content = (choices[0].get("message") or {}).get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        return _normalize_ai_events(_extract_json_object(str(content)))
 
     @app.get("/login")
     def login():
@@ -506,6 +652,61 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         db.commit()
         return jsonify({"ok": True})
 
+    @app.post("/api/ai/parse")
+    @login_required
+    def api_ai_parse():
+        """上传一张日程截图，调用视觉模型识别后自动写入对应日期的事件。"""
+        if not app.config["VISION_API_KEY"]:
+            return jsonify({"error": "AI 识别服务未配置（缺少 DASHSCOPE_API_KEY）"}), 503
+        ip = request.remote_addr or "unknown"
+        now_ts = time.time()
+        if now_ts - _AI_LAST_CALL.get(ip, 0.0) < _AI_MIN_INTERVAL:
+            return jsonify({"error": "请求太快，请稍等几秒再试"}), 429
+        _AI_LAST_CALL[ip] = now_ts
+        if request.content_length is not None and request.content_length > MAX_UPLOAD_BYTES:
+            return jsonify({"error": "截图不能超过 10MB"}), 413
+        data = request.get_data(cache=False)
+        if not data:
+            return jsonify({"error": "没有收到截图数据"}), 400
+        if len(data) > MAX_UPLOAD_BYTES:
+            return jsonify({"error": "截图不能超过 10MB"}), 413
+        sniffed = _sniff_image(data)
+        if sniffed is None:
+            return jsonify({"error": "仅支持 PNG / JPG / GIF / WebP 图片"}), 415
+
+        try:
+            events = vision_parse(data, sniffed[0])
+        except RuntimeError as exc:
+            app.logger.warning("AI parse failed: %s", exc)
+            return jsonify({"error": str(exc)}), 502
+
+        db = get_db()
+        added: list[dict] = []
+        skipped: list[dict] = []
+        now_iso = _iso_now()
+        for event in events:
+            line = _ai_event_line(event)
+            row = db.execute(
+                "SELECT event FROM days WHERE date = ?", (event["date"],)
+            ).fetchone()
+            existing = row["event"] if row else ""
+            existing_lines = {item.strip() for item in existing.splitlines() if item.strip()}
+            if line in existing_lines:
+                skipped.append({**event, "line": line, "reason": "已存在"})
+                continue
+            new_event = existing.rstrip("\n")
+            new_event = (new_event + "\n" if new_event else "") + line
+            db.execute(
+                """
+                INSERT INTO days(date, event, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET event = excluded.event, updated_at = excluded.updated_at
+                """,
+                (event["date"], new_event, now_iso),
+            )
+            added.append({**event, "line": line})
+        db.commit()
+        return jsonify({"added": added, "skipped": skipped, "events": events})
+
     @app.get("/uploads/<date_str>/<name>")
     @login_required
     def uploaded_file(date_str: str, name: str):
@@ -560,7 +761,10 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
     @app.errorhandler(413)
     def too_large(_error):
         if request.path.startswith("/api/"):
-            message = "图片不能超过 10MB" if request.path.endswith("/images") else "请求内容过大"
+            if request.path.endswith(("/images", "/ai/parse")):
+                message = "图片不能超过 10MB"
+            else:
+                message = "请求内容过大"
             return jsonify({"error": message}), 413
         return render_template("error.html", code=413, message="上传内容过大"), 413
 

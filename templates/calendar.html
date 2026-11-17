@@ -1,29 +1,57 @@
 {% extends "base.html" %}
+{% block page_class %}page-calendar{% endblock %}
 {% block content %}
-<section class="cal-head">
-  <div class="month-nav">
-    <a class="icon-btn" href="{{ url_for('calendar_view', month=prev_month) }}" aria-label="上个月">‹</a>
-    <h1 class="month-title">{{ title }}</h1>
-    <a class="icon-btn" href="{{ url_for('calendar_view', month=next_month) }}" aria-label="下个月">›</a>
-  </div>
-  <a class="text-btn" href="{{ url_for('calendar_view', month=today_iso[:7]) }}">今天</a>
-</section>
+<div class="cal-layout">
+  <div class="cal-main">
+    <section class="cal-head">
+      <div class="month-nav">
+        <a class="icon-btn" href="{{ url_for('calendar_view', month=prev_month) }}" aria-label="上个月">‹</a>
+        <h1 class="month-title">{{ title }}</h1>
+        <a class="icon-btn" href="{{ url_for('calendar_view', month=next_month) }}" aria-label="下个月">›</a>
+      </div>
+      <a class="text-btn" href="{{ url_for('calendar_view', month=today_iso[:7]) }}">今天</a>
+    </section>
 
-<div class="calendar" role="grid" aria-label="月历">
-  {% for name in weekday_names %}
-  <div class="dow" role="columnheader">{{ name }}</div>
-  {% endfor %}
-  {% for week in weeks %}
-    {% for cell in week %}
-    <a class="cell{% if not cell.in_month %} out{% endif %}{% if cell.is_today %} today{% endif %}"
-       role="gridcell"
-       href="{{ url_for('day_view', date_str=cell.iso) }}"
-       aria-label="{{ cell.iso }}{% if cell.has_content %}，有日程{% endif %}">
-      <span class="num">{{ cell.day }}</span>
-      {% if cell.has_content %}<span class="dot" aria-hidden="true"></span>{% endif %}
-    </a>
-    {% endfor %}
-  {% endfor %}
+    <div class="calendar" role="grid" aria-label="月历">
+      {% for name in weekday_names %}
+      <div class="dow" role="columnheader">{{ name }}</div>
+      {% endfor %}
+      {% for week in weeks %}
+        {% for cell in week %}
+        <a class="cell{% if not cell.in_month %} out{% endif %}{% if cell.is_today %} today{% endif %}"
+           role="gridcell"
+           href="{{ url_for('day_view', date_str=cell.iso) }}"
+           aria-label="{{ cell.iso }}{% if cell.has_content %}，有日程{% endif %}">
+          <span class="num">{{ cell.day }}</span>
+          {% if cell.has_content %}<span class="dot" aria-hidden="true"></span>{% endif %}
+        </a>
+        {% endfor %}
+      {% endfor %}
+    </div>
+    <p class="cal-tip">点击日期安排当天日程</p>
+  </div>
+
+  <aside class="ai-panel" id="ai-panel"
+         data-api="{{ url_for('api_ai_parse') }}"
+         data-day-template="{{ url_for('day_view', date_str='1970-01-01') }}"
+         aria-label="AI 日程导入">
+    <div class="ai-head">
+      <h2>AI 导入</h2>
+      <span id="ai-status" class="status" aria-live="polite"></span>
+    </div>
+    <div id="ai-drop" class="ai-drop" tabindex="0" role="button"
+         aria-label="粘贴或拖入日程截图">
+      <p class="ai-drop-title">粘贴日程截图</p>
+      <p class="ai-drop-sub"><kbd>Ctrl</kbd> + <kbd>V</kbd> · 拖拽 · 点击选择</p>
+      <input id="ai-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+      <img id="ai-preview" class="ai-preview" alt="待解析的截图" hidden>
+    </div>
+    <div id="ai-result" class="ai-result" hidden></div>
+    <p class="ai-note">AI 会识别截图里的日期和时间，并自动写入对应日期的事件，可以在日历上直接看到标记。</p>
+  </aside>
 </div>
-<p class="cal-tip">点击日期安排当天日程</p>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ai.js') }}"></script>
 {% endblock %}

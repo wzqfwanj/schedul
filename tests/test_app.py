@@ -4,10 +4,12 @@
 """
 
 import base64
+import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -34,6 +36,7 @@ class SchedulTestCase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
         app_module._FAILED_LOGINS.clear()
+        app_module._AI_LAST_CALL.clear()
 
     # ---------- helpers ----------
     def login(self, client=None):
@@ -386,6 +389,93 @@ class SchedulTestCase(unittest.TestCase):
         self.assertIn('/schedul/static/day.js', day_html)
         self.assertIn('data-api="/schedul/api/days/2026-11-04"', day_html)
         self.assertIn('data-image-api="/schedul/api/images/0"', day_html)
+
+
+    def test_ai_normalization(self):
+        payload = app_module._extract_json_object(
+            '```json\n{"events":[{"date":"2026-11-20","time":"9:05",'
+            '"title":" 面试 ","note":"腾讯会议 123"},'
+            '{"date":"2026-11-21","time":"25:00","title":"提交材料","note":""}]}\n```'
+        )
+        events = app_module._normalize_ai_events(payload)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["date"], "2026-11-20")
+        self.assertEqual(events[0]["time"], "09:05")
+        self.assertEqual(events[0]["title"], "面试")
+        self.assertEqual(events[1]["time"], "")
+        self.assertEqual(
+            app_module._ai_event_line(events[0]), "09:05 面试（腾讯会议 123）"
+        )
+        self.assertEqual(app_module._ai_event_line(events[1]), "提交材料")
+
+    def test_ai_parse_requires_login(self):
+        response = self.client.post(
+            "/api/ai/parse", data=PNG_1X1, headers={"Content-Type": "image/png"}
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_ai_parse_without_config(self):
+        self.login_ok()
+        self.app.config["VISION_API_KEY"] = ""
+        response = self.client.post(
+            "/api/ai/parse", data=PNG_1X1, headers={"Content-Type": "image/png"}
+        )
+        self.assertEqual(response.status_code, 503)
+
+    def test_ai_parse_adds_and_skips_events(self):
+        self.login_ok()
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            VISION_MODEL="test-model",
+        )
+        content = (
+            '```json\n{"events":['
+            '{"date":"2026-11-20","time":"15:00","title":"字节跳动一面","note":"腾讯会议 123"},'
+            '{"date":"2026-11-20","time":"10:00","title":"提交材料","note":""}'
+            "]}\n```"
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/parse",
+                data=PNG_1X1,
+                headers={"Content-Type": "image/png"},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(len(data["added"]), 2)
+        self.assertEqual(data["skipped"], [])
+
+        stored = self.client.get("/api/days/2026-11-20").get_json()["event"]
+        self.assertIn("15:00 字节跳动一面（腾讯会议 123）", stored)
+        self.assertIn("10:00 提交材料", stored)
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            second = self.client.post(
+                "/api/ai/parse",
+                data=PNG_1X1,
+                headers={"Content-Type": "image/png"},
+            )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.get_json()["added"], [])
+        self.assertEqual(len(second.get_json()["skipped"]), 2)
 
 
 if __name__ == "__main__":

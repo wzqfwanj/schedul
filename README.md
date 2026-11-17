@@ -18,6 +18,10 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | :---: | :---: | :---: |
 | ![当天 · 浅色](docs/screenshots/day.png) | ![当天 · 深色](docs/screenshots/day-dark.png) | ![资料弹窗](docs/screenshots/data-modal.png) |
 
+| 月历 + AI 截图导入 |
+| :---: |
+| ![AI 导入](docs/screenshots/ai-import.png) |
+
 ![移动端](docs/screenshots/mobile.png)
 
 截图文件位于仓库的 `docs/screenshots/` 目录：
@@ -29,11 +33,13 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | `day.png` | 当天页（事件直接编辑 + 资料标签）· 浅色主题 |
 | `day-dark.png` | 当天页 · 深色主题 |
 | `data-modal.png` | 点击「资料」标签弹出的截图收纳框 |
+| `ai-import.png` | 月历右侧 AI 窗口：粘贴截图后自动识别并打点 |
 | `mobile.png` | 移动端布局（约 390px 宽） |
 
 ## 功能
 
 - **月历一览**：周一开头的月视图，可切换上/下月、「今天」；有事件或截图的日期显示圆点。
+- **AI 截图导入**：月历右侧的 AI 窗口支持 `Ctrl+V` 粘贴、拖拽或选择聊天/招聘截图；视觉模型识别其中的日期、时间和事项后，自动追加到对应日期的事件里，日历立即标记。识别结果可点击进入当天核对。
 - **事件直接编辑**：点击事件区域就能直接输入/修改，不需要再点「编辑」；停止输入 600ms 自动保存（失焦、切到后台、离开页面也会保存，失败自动重试），无需点按钮。
 - **资料标签**：在编辑时输入 `<资料>`（或点「插入资料」），会直接变成可点击的「资料 N」标签；每个标签有自己独立的一组截图，点标签弹出该组的截图收纳框，N 为该组截图数量。
 - **截图收纳**：点开资料标签后，在弹窗里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。收起弹窗后截图仍在对应标签里。
@@ -53,17 +59,18 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | 生产 WSGI 服务器 | waitress 3（`waitress>=3.0,<4`） |
 | 存储 | SQLite（Python 标准库 `sqlite3`）+ 本地文件系统 |
 | 前端 | 原生 HTML / CSS / JavaScript，Jinja2 模板，无构建步骤 |
+| AI 视觉 | 阿里云百炼 `qwen3-vl-plus`（OpenAI 兼容接口，可选） |
 | 部署 | nginx 反向代理 + systemd + Let's Encrypt（见 [deploy/DEPLOY.md](deploy/DEPLOY.md)） |
 
 ## 目录结构
 
 ```text
 Schedul/
-├── app.py                  # 后端单文件：页面路由、登录、事件 API、截图 API、安全头
+├── app.py                  # 后端单文件：页面路由、登录、事件 API、截图 API、AI 解析、安全头
 ├── wsgi.py                 # WSGI 入口：waitress-serve --listen=127.0.0.1:8000 wsgi:app
 ├── requirements.txt        # 运行依赖（Flask、waitress）
 ├── templates/              # Jinja2 模板：base / login / calendar / day / error
-├── static/                 # 原生前端：style.css、theme.js、day.js、favicon.svg
+├── static/                 # 原生前端：style.css、theme.js、day.js、ai.js、favicon.svg
 ├── tests/
 │   └── test_app.py         # 核心功能测试（unittest，使用临时目录，不碰真实数据）
 ├── deploy/
@@ -113,6 +120,21 @@ python app.py
 ```
 
 浏览器打开 <http://127.0.0.1:8000>，会跳转到登录页；输入上面设置的账号密码进入月历。
+
+想启用右侧 AI 截图导入，再配置百炼视觉模型（不配置时其他功能完全正常，AI 窗口会提示未配置）：
+
+```powershell
+$env:DASHSCOPE_API_KEY = "sk-..."
+$env:VISION_MODEL = "qwen3-vl-plus"
+# Token Plan / 工作空间专用地址按百炼控制台填写；默认使用 DashScope 兼容接口
+$env:VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+```
+
+```bash
+export DASHSCOPE_API_KEY="sk-..."
+export VISION_MODEL="qwen3-vl-plus"
+export VISION_API_URL="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+```
 
 - 端口被占用时：`PORT=8080 python app.py`（Windows PowerShell：`$env:PORT = "8080"; python app.py`）。
 - 需要局域网访问时：`HOST=0.0.0.0 python app.py`，同时务必设置强密码；公网部署必须使用 HTTPS（见 [deploy/DEPLOY.md](deploy/DEPLOY.md)）。
@@ -165,6 +187,9 @@ Windows 可用 `sqlite3.exe` 执行同样的 `.backup`，再对 `data\uploads` �
 | `DATA_DIR` | 空 | 数据目录。留空表示项目根目录下的 `data/`；生产环境建议指定独立路径（如 `/var/lib/schedul`） |
 | `APP_TZ` | `Asia/Shanghai` | 时区，决定「今天」以及页面上事件/截图时间的显示 |
 | `COOKIE_SECURE` | `0` | 设为 `1` 时会话 Cookie 仅通过 HTTPS 传输。**HTTPS 部署必须设为 1**；纯 HTTP 调试时保持 0，否则登录后 Cookie 不会发送、表现为登录无效 |
+| `DASHSCOPE_API_KEY` | 空 | 阿里云百炼 API Key；留空时「AI 截图导入」不可用，其余功能正常 |
+| `VISION_API_URL` | DashScope 兼容接口 | OpenAI 兼容的 chat/completions 地址。百炼 Token Plan / 工作空间专用地址按控制台填写 |
+| `VISION_MODEL` | `qwen3-vl-plus` | 截图解析使用的视觉模型名 |
 | `HOST` | `127.0.0.1` | 仅 `python app.py` 开发服务器使用：监听地址。容器内可设为 `0.0.0.0` |
 | `PORT` | `8000` | 仅 `python app.py` 开发服务器使用：监听端口。waitress 的监听地址由 `--listen` 参数决定 |
 
@@ -180,8 +205,8 @@ Windows 可用 `sqlite3.exe` 执行同样的 `.backup`，再对 `data\uploads` �
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/` | 月历。可选查询参数 `?month=YYYY-MM` 查看指定月份 |
-| `GET` | `/day/<YYYY-MM-DD>` | 当天页：事件文本框 + 截图区；非法日期返回 404 |
+| `GET` | `/` | 月历 + 右侧 AI 截图导入窗口。可选查询参数 `?month=YYYY-MM` 查看指定月份 |
+| `GET` | `/day/<YYYY-MM-DD>` | 当天页：事件直接编辑 + 资料截图弹窗；非法日期返回 404 |
 | `GET` | `/login` | 登录页（已登录则跳回月历） |
 | `POST` | `/login` | 表单登录，字段 `username`、`password`、可选 `next`；失败 401，限流 429 |
 | `POST` | `/logout` | 退出登录（仅 POST，需登录），清空会话后跳回登录页 |
@@ -194,6 +219,7 @@ JSON / 文件 API：
 | `PUT` | `/api/days/<YYYY-MM-DD>` | JSON：`{"event": "文本"}`，最长 20000 字 | `200` `{ok: true, updated_at, time_label}`；格式/类型/超长 400，日期非法 404 |
 | `POST` | `/api/days/<YYYY-MM-DD>/images?slot=N` | 原始图片字节（请求体即文件）；`slot` 为第几组 `<资料>`（从 0 开始，默认 0，最大 99）；`Content-Type` 为 `image/png`、`image/jpeg`、`image/gif` 或 `image/webp` | `201` `{"image": {id, date, slot, url, download_url, mime, size, size_label, created_at, time_label}}`；空请求 400、slot 非法 400、超 10MB 413、非位图 415 |
 | `DELETE` | `/api/images/<id>` | — | `200` `{ok: true}`；不存在 404 |
+| `POST` | `/api/ai/parse` | 原始图片字节（截图），`Content-Type` 为图片类型 | `200` `{added: [...], skipped: [...], events: [...]}`；未配置 Key 503、同 IP 频繁请求 429、模型失败 502、非图片 415 |
 | `GET` | `/uploads/<YYYY-MM-DD>/<文件名>` | 可选 `?download=1` 以附件形式下载 | 返回图片；文件名/日期不合法或不存在 404 |
 
 接口示例（需要先登录拿到会话 Cookie）：
@@ -226,7 +252,7 @@ curl -b cookies.txt -X DELETE http://127.0.0.1:8000/api/images/1
 python -m unittest discover -s tests -v
 ```
 
-当前共 26 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图按 `<资料>` 分组上传/查看/下载/删除、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
+当前共 30 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、截图按 `<资料>` 分组上传/查看/下载/删除、AI 解析结果校验与写入/去重、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
 
 ## 安全说明
 
@@ -237,6 +263,7 @@ python -m unittest discover -s tests -v
 - **会话**：Flask 签名 Cookie，`HttpOnly`、`SameSite=Lax`，有效期 30 天；更换 `SECRET_KEY` 可让所有已登录会话立即失效。退出登录使用 POST 表单。
 - **登录限流**：同一 IP 在 10 分钟内失败 10 次后暂时拒绝登录；限流计数保存在进程内存中，重启后清空。反代部署时所有请求的 `remote_addr` 都是 `127.0.0.1`，即限流按整个站点统一计数（单用户场景影响不大；若将来改成多用户需自行处理真实 IP）。
 - **上传限制**：单张截图最大 10MB，只接受 PNG / JPG / GIF / WebP 位图（校验文件头魔数，拒绝 SVG 以防 XSS）；文件以随机文件名保存并按日期分目录，路径参数经过白名单校验；截图访问、下载均需登录。
+- **AI 截图导入**：截图会发送给配置的视觉模型服务（阿里云百炼）解析，应用本身不保存这张原图；`DASHSCOPE_API_KEY` 只存在服务端环境变量中，不会下发到浏览器。接口需要登录，并按 IP 做了 2 秒限频以控制误触费用。模型输出只用于追加事件文本，不会覆盖已有内容；同日重复的条目会自动跳过。
 - **CSRF**：事件保存使用 JSON `PUT`，截图为原始请求体上传，跨站表单无法直接伪造；会话 Cookie 使用 `SameSite=Lax`，进一步降低跨站请求风险。登录/登出为同源表单提交。若需更高强度，可在前置 nginx 增加额外校验。
 - **安全响应头**：CSP（禁止内联脚本与第三方资源）、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`。
 - **建议**：不要把数据库/截图目录暴露为静态目录；`data/` 内含隐私内容，定期备份并限制文件权限；如仅个人使用，可只允许自己的 IP 或通过 VPN 访问。
@@ -278,7 +305,7 @@ python -m unittest discover -s tests -v
 nginx 默认请求体限制很小。确认站点配置中有 `client_max_body_size 12m;`（略大于应用的 10MB 限制），然后 `sudo nginx -t && sudo systemctl reload nginx`。
 
 **README 截图显示不出来**
-确认 `docs/screenshots/` 下的 6 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
+确认 `docs/screenshots/` 下的 7 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
 
 ## 参与贡献
 

@@ -8,7 +8,7 @@
   <script src="{{ url_for('static', filename='theme.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="{% block page_class %}{% endblock %}">
   <header class="top">
     <a class="brand" href="{{ url_for('calendar_view') }}">日程</a>
     <div class="top-actions">
