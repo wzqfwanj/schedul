@@ -222,26 +222,31 @@ def _normalize_ai_time(value: str) -> str:
 
 
 def _normalize_ai_events(payload: dict | None) -> list[dict]:
-    """校验模型返回的 events，输出干净的 {date,time,title,note} 列表。"""
+    """校验模型返回的 events，输出干净的 {date,time,company,role,address} 列表。"""
     if not isinstance(payload, dict):
         return []
     raw_events = payload.get("events")
     if not isinstance(raw_events, list):
         return []
+
+    def clean(value, limit: int) -> str:
+        return str(value or "").strip().replace("\n", " ")[:limit]
+
     events: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     for raw in raw_events[:20]:
         if not isinstance(raw, dict):
             continue
-        date_value = _valid_date(str(raw.get("date") or "").strip())
+        date_value = _valid_date(clean(raw.get("date"), 10))
         if date_value is None:
             continue
         time_value = _normalize_ai_time(str(raw.get("time") or ""))
-        title = str(raw.get("title") or "").strip().replace("\n", " ")[:80]
-        note = str(raw.get("note") or "").strip().replace("\n", " ")[:100]
-        if not title:
+        company = clean(raw.get("company"), 60)
+        role = clean(raw.get("role") or raw.get("position") or raw.get("title"), 60)
+        address = clean(raw.get("address") or raw.get("location") or raw.get("note"), 180)
+        if not (company or role or address):
             continue
-        key = (date_value.isoformat(), time_value, title)
+        key = (date_value.isoformat(), time_value, company, role, address)
         if key in seen:
             continue
         seen.add(key)
@@ -249,19 +254,24 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
             {
                 "date": date_value.isoformat(),
                 "time": time_value,
-                "title": title,
-                "note": note,
+                "company": company,
+                "role": role,
+                "address": address,
             }
         )
     return events
 
 
 def _ai_event_line(event: dict) -> str:
-    line = f"{event.get('time', '')} {event.get('title', '')}".strip()
-    note = (event.get("note") or "").strip()
-    if note and note not in {"无", "暂无", "-", "—"}:
-        line = f"{line}（{note[:80]}）"
-    return line[:180]
+    parts = []
+    if event.get("company"):
+        parts.append(f"公司：{event['company']}")
+    if event.get("role"):
+        parts.append(f"岗位：{event['role']}")
+    if event.get("address"):
+        parts.append(f"地址：{event['address']}")
+    body = "｜".join(parts)
+    return f"{event.get('time', '')} {body}".strip()[:240]
 
 
 def create_app(data_dir: str | Path | None = None) -> Flask:
@@ -423,12 +433,12 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         prompt = f"""你是日程截图解析助手。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
 截图可能来自聊天记录、招聘软件、邮件或日历。请提取其中对用户自己有效的日程、面试、会议和待办。
 只输出严格 JSON，不要 markdown，不要解释：
-{{"events":[{{"date":"YYYY-MM-DD","time":"HH:MM 或空","title":"简短标题","note":"补充信息"}}]}}
+{{"events":[{{"date":"YYYY-MM-DD","time":"HH:MM 或空","company":"公司名","role":"岗位/职位","address":"地址或线上会议信息"}}]}}
 规则：
 1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期；截图完全没有日期时不要输出这一条。
 2. time 必须是截图中真实出现的时间，用 24 小时制 HH:MM；时间段取开始时间（如 15:00-16:00 记 15:00）；截图只有日期、没有具体时间时留空；绝对不要用当前时间填充。
-3. title 用简洁中文，优先包含公司/对象+事项，例如「字节跳动一面」「美团二面」「提交材料」；不要把日期、时间、会议软件名、会议号、链接放进 title。
-4. note 只放会议链接、会议号、地点、需要准备的材料等具体补充信息；没有就留空。
+3. company 只填公司名，role 填岗位/职位；只填截图里明确出现的信息，不确定就留空，不要用部门、人名或会议软件名冒充公司名。
+4. address 填面试/会议地址；线上会议填会议软件 + 链接/会议号，例如「腾讯会议 464-896-883」或完整链接；没有地址就留空。
 5. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""
         image_b64 = base64.b64encode(image_bytes).decode("ascii")
         payload = {

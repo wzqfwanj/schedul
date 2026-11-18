@@ -83,10 +83,10 @@
     var link = document.createElement('a');
     link.className = 'ai-item' + (skipped ? ' is-skipped' : '');
     link.href = dayTemplate.replace('1970-01-01', event.date);
-    link.title = '打开当天日程';
-    if (skipped) {
-      link.title = '这条已经存在，未重复添加';
-    }
+    link.title = skipped ? '这条已经存在，未重复添加' : '打开当天日程';
+
+    var head = document.createElement('span');
+    head.className = 'ai-item-head';
 
     var date = document.createElement('span');
     date.className = 'ai-date';
@@ -96,20 +96,42 @@
     time.className = 'ai-time' + (event.time ? '' : ' is-unset');
     time.textContent = event.time || '未识别时间';
 
-    var title = document.createElement('span');
-    title.className = 'ai-title';
-    title.textContent = event.title + (skipped ? '（已存在）' : '');
-
-    link.appendChild(date);
-    link.appendChild(time);
-    link.appendChild(title);
-
-    if (event.note) {
-      var note = document.createElement('span');
-      note.className = 'ai-line-note';
-      note.textContent = event.note;
-      link.appendChild(note);
+    head.appendChild(date);
+    head.appendChild(time);
+    if (skipped) {
+      var skip = document.createElement('span');
+      skip.className = 'ai-skip';
+      skip.textContent = '已存在';
+      head.appendChild(skip);
     }
+
+    var fields = document.createElement('span');
+    fields.className = 'ai-fields';
+    var rows = [];
+    if (event.company) {
+      rows.push('公司：' + event.company);
+    }
+    if (event.role) {
+      rows.push('岗位：' + event.role);
+    }
+    if (event.address) {
+      rows.push('地址：' + event.address);
+    }
+    if (!rows.length && event.title) {
+      rows.push(event.title);
+    }
+    if (!rows.length && event.note) {
+      rows.push(event.note);
+    }
+    rows.forEach(function (text) {
+      var field = document.createElement('span');
+      field.className = 'ai-field';
+      field.textContent = text;
+      fields.appendChild(field);
+    });
+
+    link.appendChild(head);
+    link.appendChild(fields);
     return link;
   }
 

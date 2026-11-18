@@ -816,11 +816,10 @@ body.no-scroll {
 }
 
 .ai-item {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 6px;
-  align-items: baseline;
-  padding: 7px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 4px;
   border-bottom: 1px solid var(--line);
   color: var(--fg);
   text-decoration: none;
@@ -832,6 +831,13 @@ body.no-scroll {
 
 .ai-item:hover {
   background: var(--hover);
+}
+
+.ai-item-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .ai-date {
@@ -851,16 +857,24 @@ body.no-scroll {
   opacity: 0.8;
 }
 
-.ai-title {
-  font-size: 13px;
+.ai-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ai-field {
+  font-size: 12px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
-.ai-line-note {
-  grid-column: 1 / -1;
-  font-size: 11px;
+.ai-skip {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
   color: var(--muted);
-  overflow-wrap: anywhere;
 }
 
 .ai-item.is-skipped {
