@@ -105,6 +105,13 @@
     return out;
   }
 
+  function updateEditorEmptyState() {
+    if (!editor) {
+      return;
+    }
+    editor.classList.toggle('is-empty', serializeEvent().trim() === '');
+  }
+
   var saveTimer = null;
   var pending = false;
   var saving = false;
@@ -256,6 +263,7 @@
       });
     });
     refreshChips();
+    updateEditorEmptyState();
   }
 
   function convertAllTokens() {
@@ -341,6 +349,7 @@
     sel.removeAllRanges();
     sel.addRange(newRange);
     refreshChips();
+    updateEditorEmptyState();
     queueSave();
   }
 
@@ -348,6 +357,7 @@
   editor.addEventListener('input', function () {
     queueSave();
     convertTokenAtCaret();
+    updateEditorEmptyState();
     window.setTimeout(refreshChips, 0);
   });
   editor.addEventListener('blur', function () {

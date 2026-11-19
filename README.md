@@ -1,6 +1,6 @@
 # 日程 · Schedul
 
-> 一个极简的黑白双主题日程表：月历一览、当天事件自动保存、`Ctrl` + `V` 粘贴截图收纳。
+> 一个灰色单主题的极简日程表：月历一览、当天事件自动编辑、`Ctrl` + `V` 粘贴截图收纳，以及 AI 截图导入。
 
 Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、无外部服务、无前端依赖。数据全部保存在本机（SQLite 数据库 + 截图文件），适合个人自托管。
 
@@ -10,17 +10,13 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 
 ## 截图
 
-| 月历 · 浅色 | 月历 · 深色 |
+| 月历 + AI 导入 | 当天页 |
 | :---: | :---: |
-| ![月历 · 浅色](docs/screenshots/calendar-light.png) | ![月历 · 深色](docs/screenshots/calendar-dark.png) |
+| ![月历 + AI 导入](docs/screenshots/calendar.png) | ![当天页](docs/screenshots/day.png) |
 
-| 当天 · 浅色 | 当天 · 深色 | 资料弹窗 |
-| :---: | :---: | :---: |
-| ![当天 · 浅色](docs/screenshots/day.png) | ![当天 · 深色](docs/screenshots/day-dark.png) | ![资料弹窗](docs/screenshots/data-modal.png) |
-
-| 月历 + AI 截图导入 |
-| :---: |
-| ![AI 导入](docs/screenshots/ai-import.png) |
+| 资料弹窗 | AI 解析结果 |
+| :---: | :---: |
+| ![资料弹窗](docs/screenshots/data-modal.png) | ![AI 解析结果](docs/screenshots/ai-import.png) |
 
 ![移动端](docs/screenshots/mobile.png)
 
@@ -28,12 +24,10 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 
 | 文件 | 内容 |
 | --- | --- |
-| `calendar-light.png` | 月历页 · 浅色主题 |
-| `calendar-dark.png` | 月历页 · 深色主题 |
-| `day.png` | 当天页（事件直接编辑 + 资料标签）· 浅色主题 |
-| `day-dark.png` | 当天页 · 深色主题 |
+| `calendar.png` | 月历 + 右侧 AI 导入 |
+| `day.png` | 当天页（事件直接编辑 + 资料标签） |
 | `data-modal.png` | 点击「资料」标签弹出的截图收纳框 |
-| `ai-import.png` | 月历右侧 AI 窗口：粘贴截图后自动识别并打点 |
+| `ai-import.png` | AI 截图识别结果（时间/公司/岗位/地址） |
 | `mobile.png` | 移动端布局（约 390px 宽） |
 
 ## 功能
@@ -44,10 +38,10 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 - **资料标签**：在编辑时输入 `<资料>`（或点「插入资料」），会直接变成可点击的「资料 N」标签；每个标签有自己独立的一组截图，点标签弹出该组的截图收纳框，N 为该组截图数量。
 - **截图收纳**：点开资料标签后，在弹窗里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。收起弹窗后截图仍在对应标签里。
 - **截图管理**：每组资料的缩略图网格；点击查看大图（灯箱），可下载原图或删除（删除前确认，`Esc` 关闭灯箱/弹窗）。如果事件里暂时没有对应标签，旧截图会显示为「未归类资料」，补一个 `<资料>` 即自动归入。
-- **黑白双主题**：首次访问跟随系统深浅色，右上角 ◐ 手动切换并记住选择。
+- **灰色单主题**：固定深灰底 + 浅灰文字（`#3a3f47` / `#f2f3f5`），没有明暗切换按钮，也没有主题 Cookie / localStorage，减少干扰。
 - **单账号登录**：账号密码登录，会话 Cookie `HttpOnly` + `SameSite=Lax`，有效期 30 天；同一 IP 连续失败会触发临时限流。
 - **安全优先**：上传按文件头识别类型（仅 PNG / JPG / GIF / WebP，拒绝 SVG）、随机文件名、路径穿越防护、CSP 等安全响应头。
-- **响应式**：桌面与移动端均可使用，无 JS 框架、无构建工具。
+- **响应式**：桌面与移动端均可使用，375px 宽无横向滚动，无 JS 框架、无构建工具。
 - **零配置存储**：首次启动自动创建 SQLite 数据库和会话密钥，无需安装数据库服务。
 
 ## 技术栈
@@ -58,9 +52,11 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | Web 框架 | Flask 3.1（`Flask>=3.1,<4`） |
 | 生产 WSGI 服务器 | waitress 3（`waitress>=3.0,<4`） |
 | 存储 | SQLite（Python 标准库 `sqlite3`）+ 本地文件系统 |
-| 前端 | 原生 HTML / CSS / JavaScript，Jinja2 模板，无构建步骤 |
+| 前端 | 原生 HTML / CSS / JavaScript，Jinja2 模板，无构建步骤；灰色单主题 |
 | AI 视觉 | 阿里云百炼 `qwen3-vl-plus`（OpenAI 兼容接口，可选） |
 | 部署 | nginx 反向代理 + systemd + Let's Encrypt（见 [deploy/DEPLOY.md](deploy/DEPLOY.md)） |
+
+> 前端遵循「灰色单主题极简模板」：无主题切换、无彩色、无阴影、无外部字体/图标/CDN。模板默认不引入 JS；本系统的「事件直接编辑、Ctrl+V 截图、AI 导入」需要浏览器交互，因此只使用两个原生 JS 文件（`day.js`、`ai.js`），零依赖、零构建。登录页不加载 JS。
 
 ## 目录结构
 
@@ -70,7 +66,7 @@ Schedul/
 ├── wsgi.py                 # WSGI 入口：waitress-serve --listen=127.0.0.1:8000 wsgi:app
 ├── requirements.txt        # 运行依赖（Flask、waitress）
 ├── templates/              # Jinja2 模板：base / login / calendar / day / error
-├── static/                 # 原生前端：style.css、theme.js、day.js、ai.js、favicon.svg
+├── static/                 # 原生前端：style.css、day.js、ai.js
 ├── tests/
 │   └── test_app.py         # 核心功能测试（unittest，使用临时目录，不碰真实数据）
 ├── deploy/
@@ -305,11 +301,11 @@ python -m unittest discover -s tests -v
 nginx 默认请求体限制很小。确认站点配置中有 `client_max_body_size 12m;`（略大于应用的 10MB 限制），然后 `sudo nginx -t && sudo systemctl reload nginx`。
 
 **README 截图显示不出来**
-确认 `docs/screenshots/` 下的 7 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
+确认 `docs/screenshots/` 下的 5 个 PNG 已提交到仓库，文件名大小写与 README 引用一致。
 
 ## 参与贡献
 
-欢迎提交 Issue 和 Pull Request。改动请保持项目定位（极简、无前端构建、单用户），并确保 `python -m unittest discover -s tests -v` 全部通过；涉及前端的改动请附上浅色/深色与移动端截图。
+欢迎提交 Issue 和 Pull Request。改动请保持项目定位（极简、无前端构建、单用户、灰色单主题），并确保 `python -m unittest discover -s tests -v` 全部通过；涉及前端的改动请附上桌面端与移动端截图。
 
 ## License
 

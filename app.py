@@ -489,6 +489,11 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             )
         return _normalize_ai_events(_extract_json_object(str(content)))
 
+    @app.get("/favicon.ico")
+    def favicon():
+        # 模板不引入图标资源，返回空响应避免浏览器 404
+        return "", 204
+
     @app.get("/login")
     def login():
         if session.get("user"):

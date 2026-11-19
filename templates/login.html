@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="login">
-  <h1 class="login-title">日程</h1>
-  <p class="login-sub">请登录后查看</p>
+<section class="login">
+  <h2 class="login-title">登录</h2>
+  <p class="login-sub">请输入账号密码后查看日程</p>
   <form method="post" action="{{ url_for('login_post') }}" class="login-form">
     <input type="hidden" name="next" value="{{ next }}">
     <label class="field">
@@ -16,5 +16,5 @@
     {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
     <button class="primary-btn" type="submit">登录</button>
   </form>
-</div>
+</section>
 {% endblock %}

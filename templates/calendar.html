@@ -6,7 +6,7 @@
     <section class="cal-head">
       <div class="month-nav">
         <a class="icon-btn" href="{{ url_for('calendar_view', month=prev_month) }}" aria-label="上个月">‹</a>
-        <h1 class="month-title">{{ title }}</h1>
+        <h2 class="month-title">{{ title }}</h2>
         <a class="icon-btn" href="{{ url_for('calendar_view', month=next_month) }}" aria-label="下个月">›</a>
       </div>
       <a class="text-btn" href="{{ url_for('calendar_view', month=today_iso[:7]) }}">今天</a>
@@ -47,7 +47,7 @@
       <img id="ai-preview" class="ai-preview" alt="待解析的截图" hidden>
     </div>
     <div id="ai-result" class="ai-result" hidden></div>
-    <p class="ai-note">AI 会识别截图里的日期和时间，并自动写入对应日期的事件，可以在日历上直接看到标记。</p>
+    <p class="ai-note">AI 会识别截图里的时间、公司、岗位和地址，自动写入对应日期的事件。</p>
   </aside>
 </div>
 {% endblock %}
