@@ -411,6 +411,16 @@ kbd {
   font-style: italic;
 }
 
+.ai-kind {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
 .ai-fields {
   display: flex;
   flex-direction: column;

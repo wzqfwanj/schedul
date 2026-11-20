@@ -222,7 +222,7 @@ def _normalize_ai_time(value: str) -> str:
 
 
 def _normalize_ai_events(payload: dict | None) -> list[dict]:
-    """校验模型返回的 events，输出干净的 {date,time,company,role,address} 列表。"""
+    """校验模型返回的 events，输出干净的面试/通用日程列表。"""
     if not isinstance(payload, dict):
         return []
     raw_events = payload.get("events")
@@ -233,7 +233,7 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
         return str(value or "").strip().replace("\n", " ")[:limit]
 
     events: list[dict] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str, str, str]] = set()
     for raw in raw_events[:20]:
         if not isinstance(raw, dict):
             continue
@@ -242,11 +242,46 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
             continue
         time_value = _normalize_ai_time(str(raw.get("time") or ""))
         company = clean(raw.get("company"), 60)
-        role = clean(raw.get("role") or raw.get("position") or raw.get("title"), 60)
-        address = clean(raw.get("address") or raw.get("location") or raw.get("note"), 180)
-        if not (company or role or address):
-            continue
-        key = (date_value.isoformat(), time_value, company, role, address)
+        role = clean(raw.get("role") or raw.get("position"), 60)
+        title = clean(
+            raw.get("title") or raw.get("summary") or raw.get("subject") or raw.get("event"),
+            80,
+        )
+        address = clean(
+            raw.get("address") or raw.get("location") or raw.get("place") or raw.get("note"),
+            180,
+        )
+
+        raw_kind = clean(raw.get("kind") or raw.get("type"), 20).lower()
+        if raw_kind in {"interview", "面试"}:
+            kind = "interview"
+        elif raw_kind in {"general", "schedule", "日程", "通用"}:
+            kind = "general"
+        elif company or role:
+            kind = "interview"
+        else:
+            kind = "general"
+
+        if kind == "interview":
+            if not role:
+                role = title
+            if not (company or role or address):
+                continue
+        else:
+            if not title:
+                title = role or company
+            if not (title or address):
+                continue
+
+        key = (
+            date_value.isoformat(),
+            time_value,
+            kind,
+            title,
+            company,
+            role,
+            address,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -254,6 +289,8 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
             {
                 "date": date_value.isoformat(),
                 "time": time_value,
+                "kind": kind,
+                "title": title,
                 "company": company,
                 "role": role,
                 "address": address,
@@ -264,12 +301,18 @@ def _normalize_ai_events(payload: dict | None) -> list[dict]:
 
 def _ai_event_line(event: dict) -> str:
     parts = []
-    if event.get("company"):
-        parts.append(f"公司：{event['company']}")
-    if event.get("role"):
-        parts.append(f"岗位：{event['role']}")
-    if event.get("address"):
-        parts.append(f"地址：{event['address']}")
+    if event.get("kind") == "general":
+        if event.get("title"):
+            parts.append(f"事项：{event['title']}")
+        if event.get("address"):
+            parts.append(f"地址：{event['address']}")
+    else:
+        if event.get("company"):
+            parts.append(f"公司：{event['company']}")
+        if event.get("role"):
+            parts.append(f"岗位：{event['role']}")
+        if event.get("address"):
+            parts.append(f"地址：{event['address']}")
     body = "｜".join(parts)
     return f"{event.get('time', '')} {body}".strip()[:240]
 
@@ -431,15 +474,19 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         weekday = WEEKDAY_CN[now.weekday()]
         tz_name = os.environ.get("APP_TZ", "Asia/Shanghai")
         prompt = f"""你是日程截图解析助手。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
-截图可能来自聊天记录、招聘软件、邮件或日历。请提取其中对用户自己有效的日程、面试、会议和待办。
+截图可能来自聊天记录、招聘软件、邮件或日历。请提取所有对用户有效的日程，包括面试，以及会议、约见、课程、出行、缴费、纪念日、待办等通用日程。
 只输出严格 JSON，不要 markdown，不要解释：
-{{"events":[{{"date":"YYYY-MM-DD","time":"HH:MM 或空","company":"公司名","role":"岗位/职位","address":"地址或线上会议信息"}}]}}
+{{"events":[
+  {{"kind":"interview","date":"YYYY-MM-DD","time":"HH:MM 或空","company":"公司名","role":"岗位/职位","address":"地址或线上会议信息"}},
+  {{"kind":"general","date":"YYYY-MM-DD","time":"HH:MM 或空","title":"事项","address":"地点或线上会议信息"}}
+]}}
 规则：
 1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期；截图完全没有日期时不要输出这一条。
 2. time 必须是截图中真实出现的时间，用 24 小时制 HH:MM；时间段取开始时间（如 15:00-16:00 记 15:00）；截图只有日期、没有具体时间时留空；绝对不要用当前时间填充。
-3. company 只填公司名，role 填岗位/职位；只填截图里明确出现的信息，不确定就留空，不要用部门、人名或会议软件名冒充公司名。
-4. address 填面试/会议地址；线上会议填会议软件 + 链接/会议号，例如「腾讯会议 464-896-883」或完整链接；没有地址就留空。
-5. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""
+3. kind：面试/招聘相关填 interview，其他日程填 general；同一张截图里两类都有时都要输出，不要只提取面试。
+4. interview：company 只填公司名，role 填岗位/职位，address 填面试地址或线上会议信息；只填截图里明确出现的信息，不确定就留空，不要用部门、人名或会议软件名冒充公司名。
+5. general：title 填简短事项，例如「产品分享会」「取快递」「交房租」「体检」；address 填地点、链接或会议号；company 和 role 留空。
+6. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""
         image_b64 = base64.b64encode(image_bytes).decode("ascii")
         payload = {
             "model": str(app.config["VISION_MODEL"]),

@@ -393,24 +393,35 @@ class SchedulTestCase(unittest.TestCase):
 
     def test_ai_normalization(self):
         payload = app_module._extract_json_object(
-            '```json\n{"events":[{"date":"2026-11-20","time":"9:05",'
+            '```json\n{"events":[{"kind":"interview","date":"2026-11-20","time":"9:05",'
             '"company":"字节跳动","role":"AI 应用开发","address":"腾讯会议 123"},'
-            '{"date":"2026-11-21","time":"25:00","title":"提交材料","note":""}]}\n```'
+            '{"kind":"general","date":"2026-11-21","time":"19:30",'
+            '"title":"产品分享会","address":"线上会议 999"},'
+            '{"date":"2026-11-22","time":"25:00","title":"提交材料"}]}\n```'
         )
         events = app_module._normalize_ai_events(payload)
-        self.assertEqual(len(events), 2)
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[0]["kind"], "interview")
         self.assertEqual(events[0]["date"], "2026-11-20")
         self.assertEqual(events[0]["time"], "09:05")
         self.assertEqual(events[0]["company"], "字节跳动")
         self.assertEqual(events[0]["role"], "AI 应用开发")
         self.assertEqual(events[0]["address"], "腾讯会议 123")
-        self.assertEqual(events[1]["time"], "")
-        self.assertEqual(events[1]["role"], "提交材料")
+        self.assertEqual(events[1]["kind"], "general")
+        self.assertEqual(events[1]["time"], "19:30")
+        self.assertEqual(events[1]["title"], "产品分享会")
+        self.assertEqual(events[2]["kind"], "general")
+        self.assertEqual(events[2]["time"], "")
+        self.assertEqual(events[2]["title"], "提交材料")
         self.assertEqual(
             app_module._ai_event_line(events[0]),
             "09:05 公司：字节跳动｜岗位：AI 应用开发｜地址：腾讯会议 123",
         )
-        self.assertEqual(app_module._ai_event_line(events[1]), "岗位：提交材料")
+        self.assertEqual(
+            app_module._ai_event_line(events[1]),
+            "19:30 事项：产品分享会｜地址：线上会议 999",
+        )
+        self.assertEqual(app_module._ai_event_line(events[2]), "事项：提交材料")
 
     def test_ai_time_formats(self):
         cases = {
@@ -451,7 +462,8 @@ class SchedulTestCase(unittest.TestCase):
         )
         content = (
             '```json\n{"events":['
-            '{"date":"2026-11-20","time":"15:00","company":"字节跳动","role":"智能体开发","address":"腾讯会议 123"},'
+            '{"kind":"interview","date":"2026-11-20","time":"15:00","company":"字节跳动","role":"智能体开发","address":"腾讯会议 123"},'
+            '{"kind":"general","date":"2026-11-20","time":"19:30","title":"产品分享会","address":"线上会议 999"},'
             '{"date":"2026-11-20","time":"10:00","company":"美团","role":"二面","address":""}'
             "]}\n```"
         )
@@ -477,11 +489,12 @@ class SchedulTestCase(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertEqual(len(data["added"]), 2)
+        self.assertEqual(len(data["added"]), 3)
         self.assertEqual(data["skipped"], [])
 
         stored = self.client.get("/api/days/2026-11-20").get_json()["event"]
         self.assertIn("15:00 公司：字节跳动｜岗位：智能体开发｜地址：腾讯会议 123", stored)
+        self.assertIn("19:30 事项：产品分享会｜地址：线上会议 999", stored)
         self.assertIn("10:00 公司：美团｜岗位：二面", stored)
 
         app_module._AI_LAST_CALL.clear()
@@ -495,7 +508,7 @@ class SchedulTestCase(unittest.TestCase):
             )
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.get_json()["added"], [])
-        self.assertEqual(len(second.get_json()["skipped"]), 2)
+        self.assertEqual(len(second.get_json()["skipped"]), 3)
 
 
 if __name__ == "__main__":

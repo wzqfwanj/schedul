@@ -96,8 +96,14 @@
     time.className = 'ai-time' + (event.time ? '' : ' is-unset');
     time.textContent = event.time || '未识别时间';
 
+    var isInterview = event.kind === 'interview';
+    var kind = document.createElement('span');
+    kind.className = 'ai-kind';
+    kind.textContent = isInterview ? '面试' : '日程';
+
     head.appendChild(date);
     head.appendChild(time);
+    head.appendChild(kind);
     if (skipped) {
       var skip = document.createElement('span');
       skip.className = 'ai-skip';
@@ -108,17 +114,32 @@
     var fields = document.createElement('span');
     fields.className = 'ai-fields';
     var rows = [];
-    if (event.company) {
-      rows.push('公司：' + event.company);
-    }
-    if (event.role) {
-      rows.push('岗位：' + event.role);
-    }
-    if (event.address) {
-      rows.push('地址：' + event.address);
-    }
-    if (!rows.length && event.title) {
-      rows.push(event.title);
+    if (!isInterview) {
+      if (event.title) {
+        rows.push('事项：' + event.title);
+      }
+      if (event.address) {
+        rows.push('地址：' + event.address);
+      }
+      if (!rows.length && event.company) {
+        rows.push('公司：' + event.company);
+      }
+      if (!rows.length && event.role) {
+        rows.push('岗位：' + event.role);
+      }
+    } else {
+      if (event.company) {
+        rows.push('公司：' + event.company);
+      }
+      if (event.role) {
+        rows.push('岗位：' + event.role);
+      }
+      if (event.address) {
+        rows.push('地址：' + event.address);
+      }
+      if (!rows.length && event.title) {
+        rows.push(event.title);
+      }
     }
     if (!rows.length && event.note) {
       rows.push(event.note);
