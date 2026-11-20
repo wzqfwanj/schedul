@@ -221,6 +221,20 @@ def _normalize_ai_time(value: str) -> str:
     return ""
 
 
+def _event_kinds(text: str) -> set[str]:
+    """从事件文本判断当天包含的日程类型：面试 / 通用。"""
+    kinds: set[str] = set()
+    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "面试" in line or "公司：" in line or "岗位：" in line:
+            kinds.add("interview")
+        else:
+            kinds.add("general")
+    return kinds
+
+
 def _normalize_ai_events(payload: dict | None) -> list[dict]:
     """校验模型返回的 events，输出干净的面试/通用日程列表。"""
     if not isinstance(payload, dict):
@@ -592,18 +606,20 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 
         db = get_db()
         start_iso, end_iso = month_first.isoformat(), month_last.isoformat()
-        content_dates: set[str] = set()
+        day_kinds: dict[str, set[str]] = {}
         for row in db.execute(
             "SELECT date, event FROM days WHERE date BETWEEN ? AND ?",
             (start_iso, end_iso),
         ):
-            if (row["event"] or "").strip():
-                content_dates.add(row["date"])
+            text = row["event"] or ""
+            if text.strip():
+                day_kinds[row["date"]] = _event_kinds(text)
         for row in db.execute(
             "SELECT DISTINCT date FROM images WHERE date BETWEEN ? AND ?",
             (start_iso, end_iso),
         ):
-            content_dates.add(row["date"])
+            # 只有截图、没有事件文本的日期按通用日程显示白点
+            day_kinds.setdefault(row["date"], {"general"})
 
         grid_start = month_first - dt.timedelta(days=month_first.weekday())
         grid_end = month_last + dt.timedelta(days=6 - month_last.weekday())
@@ -612,13 +628,16 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         while cursor <= grid_end:
             week = []
             for _ in range(7):
+                kinds = day_kinds.get(cursor.isoformat(), set())
                 week.append(
                     {
                         "iso": cursor.isoformat(),
                         "day": cursor.day,
                         "in_month": cursor.month == month_first.month,
                         "is_today": cursor == today,
-                        "has_content": cursor.isoformat() in content_dates,
+                        "has_content": bool(kinds),
+                        "has_interview": "interview" in kinds,
+                        "has_general": "general" in kinds,
                     }
                 )
                 cursor += dt.timedelta(days=1)

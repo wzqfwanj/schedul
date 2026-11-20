@@ -9,6 +9,8 @@
   --muted: #b3b9c2;
   --line: #4b525c;
   --hover: #454c56;
+  /* 面试日程圆点：按需求保留的唯一强调色 */
+  --interview: #6ea8ff;
 }
 
 /* ---------- 基础 ---------- */
@@ -257,15 +259,28 @@ kbd {
   font-weight: 600;
 }
 
-.dot {
+.dots {
   position: absolute;
-  bottom: 10px;
+  bottom: 9px;
   left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transform: translateX(-50%);
+}
+
+.dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
+}
+
+.dot-general {
   background: var(--fg);
-  transform: translateX(-50%);
+}
+
+.dot-interview {
+  background: var(--interview);
 }
 
 .cal-tip {
@@ -957,7 +972,7 @@ body.no-scroll {
     line-height: 22px;
   }
 
-  .dot {
+  .dots {
     bottom: 7px;
   }
 

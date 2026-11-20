@@ -5,6 +5,7 @@
 
 import base64
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -186,6 +187,53 @@ class SchedulTestCase(unittest.TestCase):
             self.client.put(f"/api/days/{DATE}", json={"event": whitespace})
             html = self.client.get("/?month=2026-11").get_data(as_text=True)
             self.assertNotIn("2026-11-04，有日程", html, repr(whitespace))
+
+    def test_event_kinds(self):
+        self.assertEqual(
+            app_module._event_kinds("15:00 公司：字节跳动｜岗位：AI 开发"),
+            {"interview"},
+        )
+        self.assertEqual(
+            app_module._event_kinds("19:30 事项：产品分享会｜地址：线上会议"),
+            {"general"},
+        )
+        self.assertEqual(app_module._event_kinds("10:00 面试"), {"interview"})
+        self.assertEqual(app_module._event_kinds("  \n\t "), set())
+
+    def test_calendar_dots_distinguish_interview_and_general(self):
+        self.login_ok()
+        self.client.put(
+            "/api/days/2026-11-20",
+            json={"event": "15:00 公司：字节跳动｜岗位：AI 开发｜地址：腾讯会议"},
+        )
+        self.client.put(
+            "/api/days/2026-11-21",
+            json={"event": "19:30 事项：产品分享会｜地址：线上会议"},
+        )
+        self.client.put(
+            "/api/days/2026-11-22",
+            json={"event": "09:00 公司：甲｜岗位：乙\n19:00 事项：晚餐"},
+        )
+        html = self.client.get("/?month=2026-11").get_data(as_text=True)
+
+        def cell(date: str) -> str:
+            matched = re.search(
+                rf'aria-label="{date}，有日程".*?</a>', html, re.S
+            )
+            self.assertIsNotNone(matched, date)
+            return matched.group(0)
+
+        interview_cell = cell("2026-11-20")
+        self.assertIn("dot-interview", interview_cell)
+        self.assertNotIn("dot-general", interview_cell)
+
+        general_cell = cell("2026-11-21")
+        self.assertIn("dot-general", general_cell)
+        self.assertNotIn("dot-interview", general_cell)
+
+        mixed_cell = cell("2026-11-22")
+        self.assertIn("dot-interview", mixed_cell)
+        self.assertIn("dot-general", mixed_cell)
 
     def test_api_405_is_json(self):
         self.login_ok()
