@@ -261,11 +261,13 @@ kbd {
 
 .dots {
   position: absolute;
-  bottom: 9px;
+  bottom: 8px;
   left: 50%;
   display: flex;
-  align-items: center;
-  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 5px;
+  max-width: calc(100% - 14px);
   transform: translateX(-50%);
 }
 

@@ -245,6 +245,26 @@ class SchedulTestCase(unittest.TestCase):
         self.assertIn("dot-interview", mixed_cell)
         self.assertIn("dot-general", mixed_cell)
 
+    def test_calendar_repeats_dot_per_interview(self):
+        self.login_ok()
+        self.client.put(
+            "/api/days/2026-11-25",
+            json={
+                "event": (
+                    "10:00 事项：飞书视频会议：万志强 全栈｜地址：https://vc.feishu.cn/j/612518211\n"
+                    "15:00 公司：万志强｜岗位：AI算法｜地址：会议号 838 921 676"
+                )
+            },
+        )
+        html = self.client.get("/?month=2026-11").get_data(as_text=True)
+        matched = re.search(
+            r'aria-label="2026-11-25，有日程".*?</a>', html, re.S
+        )
+        self.assertIsNotNone(matched)
+        cell = matched.group(0)
+        self.assertEqual(cell.count("dot-interview"), 2)
+        self.assertNotIn("dot-general", cell)
+
     def test_api_405_is_json(self):
         self.login_ok()
         response = self.client.get(f"/api/days/{DATE}/images")

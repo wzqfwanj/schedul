@@ -23,10 +23,10 @@
            href="{{ url_for('day_view', date_str=cell.iso) }}"
            aria-label="{{ cell.iso }}{% if cell.has_content %}，有日程{% endif %}">
           <span class="num">{{ cell.day }}</span>
-          {% if cell.has_interview or cell.has_general %}
+          {% if cell.has_content %}
           <span class="dots" aria-hidden="true">
-            {% if cell.has_interview %}<span class="dot dot-interview"></span>{% endif %}
-            {% if cell.has_general %}<span class="dot dot-general"></span>{% endif %}
+            {% for i in range(cell.interview_count) %}<span class="dot dot-interview"></span>{% endfor %}
+            {% for i in range(cell.general_count) %}<span class="dot dot-general"></span>{% endfor %}
           </span>
           {% endif %}
         </a>

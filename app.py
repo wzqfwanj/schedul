@@ -221,8 +221,8 @@ def _normalize_ai_time(value: str) -> str:
     return ""
 
 
-def _event_kinds(text: str) -> set[str]:
-    """从事件文本判断当天包含的日程类型：面试 / 通用。"""
+def _event_kind_counts(text: str) -> dict[str, int]:
+    """按事件行统计当天面试 / 通用日程数量。"""
     role_hints = (
         "全栈",
         "前端",
@@ -246,7 +246,7 @@ def _event_kinds(text: str) -> set[str]:
         "技术面",
     )
     interview_contexts = ("面试", "视频会议", "电话", "语音")
-    kinds: set[str] = set()
+    counts = {"interview": 0, "general": 0}
     for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
         line = raw_line.strip()
         if not line:
@@ -259,10 +259,15 @@ def _event_kinds(text: str) -> set[str]:
             or "岗位：" in line
             or (has_role and has_context)
         ):
-            kinds.add("interview")
+            counts["interview"] += 1
         else:
-            kinds.add("general")
-    return kinds
+            counts["general"] += 1
+    return counts
+
+
+def _event_kinds(text: str) -> set[str]:
+    """从事件文本判断当天包含的日程类型：面试 / 通用。"""
+    return {kind for kind, count in _event_kind_counts(text).items() if count}
 
 
 def _normalize_ai_events(payload: dict | None) -> list[dict]:
@@ -636,20 +641,20 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 
         db = get_db()
         start_iso, end_iso = month_first.isoformat(), month_last.isoformat()
-        day_kinds: dict[str, set[str]] = {}
+        day_counts: dict[str, dict[str, int]] = {}
         for row in db.execute(
             "SELECT date, event FROM days WHERE date BETWEEN ? AND ?",
             (start_iso, end_iso),
         ):
             text = row["event"] or ""
             if text.strip():
-                day_kinds[row["date"]] = _event_kinds(text)
+                day_counts[row["date"]] = _event_kind_counts(text)
         for row in db.execute(
             "SELECT DISTINCT date FROM images WHERE date BETWEEN ? AND ?",
             (start_iso, end_iso),
         ):
-            # 只有截图、没有事件文本的日期按通用日程显示白点
-            day_kinds.setdefault(row["date"], {"general"})
+            # 只有截图、没有事件文本的日期按通用日程显示一个白点
+            day_counts.setdefault(row["date"], {"interview": 0, "general": 1})
 
         grid_start = month_first - dt.timedelta(days=month_first.weekday())
         grid_end = month_last + dt.timedelta(days=6 - month_last.weekday())
@@ -658,16 +663,18 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         while cursor <= grid_end:
             week = []
             for _ in range(7):
-                kinds = day_kinds.get(cursor.isoformat(), set())
+                counts = day_counts.get(
+                    cursor.isoformat(), {"interview": 0, "general": 0}
+                )
                 week.append(
                     {
                         "iso": cursor.isoformat(),
                         "day": cursor.day,
                         "in_month": cursor.month == month_first.month,
                         "is_today": cursor == today,
-                        "has_content": bool(kinds),
-                        "has_interview": "interview" in kinds,
-                        "has_general": "general" in kinds,
+                        "has_content": counts["interview"] + counts["general"] > 0,
+                        "interview_count": counts["interview"],
+                        "general_count": counts["general"],
                     }
                 )
                 cursor += dt.timedelta(days=1)
