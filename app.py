@@ -223,12 +223,42 @@ def _normalize_ai_time(value: str) -> str:
 
 def _event_kinds(text: str) -> set[str]:
     """从事件文本判断当天包含的日程类型：面试 / 通用。"""
+    role_hints = (
+        "全栈",
+        "前端",
+        "后端",
+        "算法",
+        "开发",
+        "测试",
+        "工程师",
+        "产品经理",
+        "运营",
+        "设计",
+        "实习",
+        "校招",
+        "社招",
+        "候选人",
+        "HR",
+        "一面",
+        "二面",
+        "三面",
+        "终面",
+        "技术面",
+    )
+    interview_contexts = ("面试", "视频会议", "电话", "语音")
     kinds: set[str] = set()
     for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
         line = raw_line.strip()
         if not line:
             continue
-        if "面试" in line or "公司：" in line or "岗位：" in line:
+        has_role = any(hint in line for hint in role_hints)
+        has_context = any(hint in line for hint in interview_contexts)
+        if (
+            "面试" in line
+            or "公司：" in line
+            or "岗位：" in line
+            or (has_role and has_context)
+        ):
             kinds.add("interview")
         else:
             kinds.add("general")
@@ -497,7 +527,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 规则：
 1. date 用截图里能确定的绝对日期；相对日期（今天/明天/后天/下周一/本周五等）按当前时间换算成具体日期；截图完全没有日期时不要输出这一条。
 2. time 必须是截图中真实出现的时间，用 24 小时制 HH:MM；时间段取开始时间（如 15:00-16:00 记 15:00）；截图只有日期、没有具体时间时留空；绝对不要用当前时间填充。
-3. kind：面试/招聘相关填 interview，其他日程填 general；同一张截图里两类都有时都要输出，不要只提取面试。
+3. kind：面试/招聘相关填 interview，其他日程填 general；即使截图没有「面试」二字，只要出现候选人/面试官、岗位 + 视频会议/电话沟通、技术面/HR 沟通等，也按 interview；同一张截图里两类都有时都要输出，不要只提取面试。
 4. interview：company 只填公司名，role 填岗位/职位，address 填面试地址或线上会议信息；只填截图里明确出现的信息，不确定就留空，不要用部门、人名或会议软件名冒充公司名。
 5. general：title 填简短事项，例如「产品分享会」「取快递」「交房租」「体检」；address 填地点、链接或会议号；company 和 role 留空。
 6. 同一日程只输出一次；截图里没有明确日程时输出 {{"events":[]}}。"""

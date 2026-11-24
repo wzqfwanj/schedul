@@ -198,6 +198,16 @@ class SchedulTestCase(unittest.TestCase):
             {"general"},
         )
         self.assertEqual(app_module._event_kinds("10:00 面试"), {"interview"})
+        self.assertEqual(
+            app_module._event_kinds(
+                "10:00 事项：飞书视频会议：万志强 全栈｜地址：https://vc.feishu.cn/j/612518211"
+            ),
+            {"interview"},
+        )
+        self.assertEqual(
+            app_module._event_kinds("19:30 事项：产品分享会｜地址：线上会议"),
+            {"general"},
+        )
         self.assertEqual(app_module._event_kinds("  \n\t "), set())
 
     def test_calendar_dots_distinguish_interview_and_general(self):
