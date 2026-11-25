@@ -442,6 +442,14 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_images_date ON images(date);
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role       TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    changes    TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_id ON chat_messages(id);
                 """
             )
             # 兼容旧库：早期版本没有 slot 字段，所有截图默认归到第一个 <资料>
@@ -609,6 +617,54 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                 if item:
                     lines.append(f"  - {item[:500]}")
         return "\n".join(lines)[:8000] or "（未来 120 天暂无日程）"
+
+    def load_chat_history(limit: int = 40) -> list[dict]:
+        """读取最近对话，返回 role/content/changes；用于页面恢复和模型上下文。"""
+        rows = get_db().execute(
+            "SELECT role, content, changes FROM chat_messages ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        messages = []
+        for row in reversed(rows):
+            try:
+                changes = json.loads(row["changes"] or "[]")
+            except (TypeError, ValueError):
+                changes = []
+            if not isinstance(changes, list):
+                changes = []
+            messages.append(
+                {
+                    "role": row["role"],
+                    "content": row["content"],
+                    "changes": changes,
+                }
+            )
+        return messages
+
+    def save_chat_turn(user_content: str, reply: str, changes: list[dict]) -> None:
+        """把一轮对话写入 SQLite，并只保留最近 200 条。"""
+        db = get_db()
+        now_iso = _iso_now()
+        db.execute(
+            "INSERT INTO chat_messages(role, content, changes, created_at) VALUES (?, ?, ?, ?)",
+            ("user", user_content[:2000], "[]", now_iso),
+        )
+        db.execute(
+            "INSERT INTO chat_messages(role, content, changes, created_at) VALUES (?, ?, ?, ?)",
+            (
+                "assistant",
+                reply[:4000],
+                json.dumps(changes[:20], ensure_ascii=False),
+                now_iso,
+            ),
+        )
+        db.execute(
+            """
+            DELETE FROM chat_messages
+            WHERE id NOT IN (SELECT id FROM chat_messages ORDER BY id DESC LIMIT 200)
+            """
+        )
+        db.commit()
 
     def apply_ai_events(events: list[dict]) -> tuple[list[dict], list[dict]]:
         """把校验后的日程追加到事件文本，跳过已存在的行。"""
@@ -1296,10 +1352,15 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         added, skipped = apply_ai_events(events)
         return jsonify({"added": added, "skipped": skipped, "events": events})
 
+    @app.get("/api/ai/chat/history")
+    @login_required
+    def api_ai_chat_history():
+        return jsonify({"messages": load_chat_history(40)})
+
     @app.post("/api/ai/chat")
     @login_required
     def api_ai_chat():
-        """对话式 AI：查期、排期，并可附带截图解析。"""
+        """对话式 AI：查期、排期、改期，并可附带截图解析。"""
         if not app.config["VISION_API_KEY"]:
             return jsonify({"error": "AI 服务未配置（缺少 DASHSCOPE_API_KEY）"}), 503
         ip = request.remote_addr or "unknown"
@@ -1323,20 +1384,25 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         if not message and not image_bytes:
             return jsonify({"error": "请输入内容或附上一张截图"}), 400
 
-        history: list[dict] = []
-        raw_history = request.form.get("history") or "[]"
-        try:
-            parsed_history = json.loads(raw_history)
-        except ValueError:
-            parsed_history = []
-        if isinstance(parsed_history, list):
-            for item in parsed_history[-12:]:
-                if not isinstance(item, dict):
-                    continue
-                role = item.get("role")
-                content = str(item.get("content") or "").strip()
-                if role in {"user", "assistant"} and content:
-                    history.append({"role": role, "content": content[:2000]})
+        # 优先使用服务端保存的对话记忆；旧页面没有历史时兼容客户端传来的 history。
+        history = [
+            {"role": item["role"], "content": item["content"]}
+            for item in load_chat_history(12)
+        ]
+        if not history:
+            raw_history = request.form.get("history") or "[]"
+            try:
+                parsed_history = json.loads(raw_history)
+            except ValueError:
+                parsed_history = []
+            if isinstance(parsed_history, list):
+                for item in parsed_history[-12:]:
+                    if not isinstance(item, dict):
+                        continue
+                    role = item.get("role")
+                    content = str(item.get("content") or "").strip()
+                    if role in {"user", "assistant"} and content:
+                        history.append({"role": role, "content": content[:2000]})
 
         try:
             reply, raw_actions = chat_reply(
@@ -1366,6 +1432,9 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         result = apply_chat_actions(raw_actions)
         if result["failed"]:
             reply += f"\n（有 {len(result['failed'])} 个操作未执行，请核对原日程或补充信息。）"
+        save_chat_turn(
+            message or "（发送了一张截图）", reply, result["changes"]
+        )
         return jsonify({"reply": reply, **result})
 
     @app.get("/uploads/<date_str>/<name>")

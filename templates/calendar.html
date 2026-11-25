@@ -38,6 +38,7 @@
 
   <aside class="ai-panel" id="ai-panel"
          data-api="{{ url_for('api_ai_chat') }}"
+         data-history-api="{{ url_for('api_ai_chat_history') }}"
          data-day-template="{{ url_for('day_view', date_str='1970-01-01') }}"
          aria-label="AI 助手">
     <div class="ai-head">

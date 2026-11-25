@@ -7,6 +7,7 @@
   }
 
   var api = panel.getAttribute('data-api');
+  var historyApi = panel.getAttribute('data-history-api');
   var dayTemplate = panel.getAttribute('data-day-template') || '/day/1970-01-01';
   var messagesEl = document.getElementById('ai-messages');
   var form = document.getElementById('ai-form');
@@ -430,5 +431,32 @@
     }
   });
 
+  function loadHistory() {
+    if (!historyApi || !messagesEl) {
+      return;
+    }
+    fetch(historyApi, { credentials: 'same-origin' })
+      .then(function (response) {
+        return response.ok ? response.json() : { messages: [] };
+      })
+      .then(function (data) {
+        var messages = data.messages || [];
+        if (!messages.length) {
+          return;
+        }
+        messagesEl.textContent = '';
+        messages.forEach(function (message) {
+          addMessage(message.role, message.content, {
+            changes: message.changes || [],
+          });
+        });
+        scrollMessages();
+      })
+      .catch(function () {
+        /* 历史加载失败不影响当前对话 */
+      });
+  }
+
   autoGrow();
+  loadHistory();
 })();

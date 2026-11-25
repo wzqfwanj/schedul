@@ -857,5 +857,48 @@ class SchedulTestCase(unittest.TestCase):
         self.assertEqual(self.client.get("/api/days/2026-11-28").get_json()["event"], "vue")
 
 
+    def test_ai_chat_history_persisted(self):
+        self.login_ok()
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {"reply": "你好，我在。", "actions": []}, ensure_ascii=False
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat", data={"message": "你好"}
+            )
+        self.assertEqual(response.status_code, 200)
+
+        history = self.client.get("/api/ai/chat/history").get_json()["messages"]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["role"], "user")
+        self.assertEqual(history[0]["content"], "你好")
+        self.assertEqual(history[1]["role"], "assistant")
+        self.assertEqual(history[1]["content"], "你好，我在。")
+
+    def test_ai_chat_history_requires_login(self):
+        response = self.client.get("/api/ai/chat/history")
+        self.assertEqual(response.status_code, 401)
+
+
 if __name__ == "__main__":
     unittest.main()
