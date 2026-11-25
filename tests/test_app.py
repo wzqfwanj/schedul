@@ -679,6 +679,176 @@ class SchedulTestCase(unittest.TestCase):
         self.assertEqual(response.get_json()["added"], [])
         self.assertEqual(self.client.get("/api/days/2026-11-25").get_json()["event"], "")
 
+    def test_ai_chat_updates_and_shifts(self):
+        self.login_ok()
+        self.client.put(
+            "/api/days/2026-11-25",
+            json={
+                "event": "css\n10:00 公司：某公司｜岗位：开发｜地址：腾讯会议"
+            },
+        )
+        self.client.put("/api/days/2026-11-26", json={"event": "js"})
+        self.client.put("/api/days/2026-11-27", json={"event": "vue"})
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {
+                "reply": "已把 25 日改成 html，其他学习任务往后推一天。",
+                "actions": [
+                    {
+                        "type": "update",
+                        "date": "2026-11-25",
+                        "old_line": "css",
+                        "new_date": "2026-11-25",
+                        "new_line": "html",
+                    },
+                    {
+                        "type": "shift",
+                        "after_date": "2026-11-25",
+                        "days": 1,
+                        "scope": "general",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                data={"message": "帮我在25日改成html，其他往后推"},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(len(data["changes"]), 2)
+        self.assertEqual(data["failed"], [])
+        self.assertEqual(
+            self.client.get("/api/days/2026-11-25").get_json()["event"],
+            "10:00 公司：某公司｜岗位：开发｜地址：腾讯会议\nhtml",
+        )
+        self.assertEqual(self.client.get("/api/days/2026-11-26").get_json()["event"], "")
+        self.assertEqual(self.client.get("/api/days/2026-11-27").get_json()["event"], "js")
+        self.assertEqual(self.client.get("/api/days/2026-11-28").get_json()["event"], "vue")
+        self.assertEqual(data["dots"]["2026-11-27"]["general"], 1)
+
+    def test_ai_chat_delete_line(self):
+        self.login_ok()
+        self.client.put(
+            "/api/days/2026-11-25", json={"event": "css\njs"}
+        )
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {
+                "reply": "已删除。",
+                "actions": [
+                    {"type": "delete", "date": "2026-11-25", "line": "css"}
+                ],
+            },
+            ensure_ascii=False,
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat", data={"message": "删掉25日的css"}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/days/2026-11-25").get_json()["event"], "js"
+        )
+
+    def test_ai_chat_insert_and_shift(self):
+        self.login_ok()
+        self.client.put(
+            "/api/days/2026-11-25",
+            json={
+                "event": "css\n10:00 公司：某公司｜岗位：开发｜地址：腾讯会议"
+            },
+        )
+        self.client.put("/api/days/2026-11-26", json={"event": "js"})
+        self.client.put("/api/days/2026-11-27", json={"event": "vue"})
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {
+                "reply": "已插入 html 并顺延原有任务。",
+                "actions": [
+                    {
+                        "type": "insert",
+                        "date": "2026-11-25",
+                        "line": "html",
+                        "shift": 1,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                data={"message": "帮我在25日改成html，其他往后推"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/days/2026-11-25").get_json()["event"],
+            "10:00 公司：某公司｜岗位：开发｜地址：腾讯会议\nhtml",
+        )
+        self.assertEqual(self.client.get("/api/days/2026-11-26").get_json()["event"], "css")
+        self.assertEqual(self.client.get("/api/days/2026-11-27").get_json()["event"], "js")
+        self.assertEqual(self.client.get("/api/days/2026-11-28").get_json()["event"], "vue")
+
 
 if __name__ == "__main__":
     unittest.main()

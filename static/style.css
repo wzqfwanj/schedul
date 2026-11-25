@@ -365,12 +365,18 @@ kbd {
   border-top: 1px dashed var(--line);
 }
 
-.ai-msg-actions a {
+.ai-msg-actions a,
+.ai-msg-actions .ai-change {
   color: var(--fg);
   font-size: 12px;
   text-decoration: underline;
   text-decoration-color: var(--muted);
   text-underline-offset: 3px;
+}
+
+.ai-msg-actions .ai-change {
+  color: var(--muted);
+  text-decoration: none;
 }
 
 .ai-msg-actions a:hover {

@@ -589,7 +589,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         return _normalize_ai_events(_extract_json_object(str(content)))
 
     def chat_snapshot() -> str:
-        """给对话模型提供最近 120 天的日程快照。"""
+        """给对话模型提供最近 120 天的逐行日程快照。"""
         today = today_fn()
         rows = get_db().execute(
             "SELECT date, event FROM days WHERE date BETWEEN ? AND ? ORDER BY date",
@@ -600,10 +600,15 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         ).fetchall()
         lines = []
         for row in rows:
-            text = (row["event"] or "").replace("\r\n", "\n").replace("\n", " / ").strip()
-            if text:
-                lines.append(f"{row['date']}: {text[:400]}")
-        return "\n".join(lines)[:6000] or "（未来 120 天暂无日程）"
+            text = (row["event"] or "").replace("\r\n", "\n").strip()
+            if not text:
+                continue
+            lines.append(f"{row['date']}:")
+            for item in text.split("\n"):
+                item = item.strip()
+                if item:
+                    lines.append(f"  - {item[:500]}")
+        return "\n".join(lines)[:8000] or "（未来 120 天暂无日程）"
 
     def apply_ai_events(events: list[dict]) -> tuple[list[dict], list[dict]]:
         """把校验后的日程追加到事件文本，跳过已存在的行。"""
@@ -634,6 +639,266 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         db.commit()
         return added, skipped
 
+    def apply_chat_actions(actions: list[dict]) -> dict:
+        """执行对话模型的 create/update/move/delete/shift 操作。"""
+        db = get_db()
+        lines_by_date: dict[str, list[str]] = {}
+        for row in db.execute("SELECT date, event FROM days"):
+            lines_by_date[row["date"]] = [
+                line.strip()
+                for line in (row["event"] or "").replace("\r\n", "\n").split("\n")
+                if line.strip()
+            ]
+
+        dirty: set[str] = set()
+        pending: list[tuple[str, str]] = []
+        pending_seen: set[tuple[str, str]] = set()
+        changes: list[dict] = []
+        failed: list[dict] = []
+        added: list[dict] = []
+        skipped: list[dict] = []
+
+        def clean_line(value) -> str:
+            return str(value or "").strip().replace("\r", "").replace("\n", " ")[:500]
+
+        def fail(reason: str, action: dict) -> None:
+            failed.append({"reason": reason, "action": action})
+
+        def take_line(date: str, line: str) -> bool:
+            items = lines_by_date.setdefault(date, [])
+            if line not in items:
+                return False
+            items.remove(line)
+            dirty.add(date)
+            return True
+
+        def looks_like_meeting(line: str) -> bool:
+            return any(
+                marker in line
+                for marker in ("面试", "会议", "公司：", "岗位：", "http://", "https://")
+            )
+
+        for action in actions[:20]:
+            if not isinstance(action, dict):
+                continue
+            action_type = str(action.get("type") or "create").lower()
+
+            if action_type == "create":
+                events = _normalize_ai_events({"events": [action]})
+                if not events:
+                    fail("缺少有效的日期或事项", action)
+                    continue
+                event = events[0]
+                line = _ai_event_line(event)
+                date = event["date"]
+                key = (date, line)
+                if line in lines_by_date.get(date, []) or key in pending_seen:
+                    skipped.append({**event, "line": line, "reason": "已存在"})
+                    continue
+                pending.append(key)
+                pending_seen.add(key)
+                dirty.add(date)
+                added.append({**event, "line": line})
+                changes.append({"type": "create", "date": date, "line": line})
+                continue
+
+            if action_type == "update":
+                date = _valid_date(str(action.get("date") or "").strip())
+                new_date = _valid_date(
+                    str(action.get("new_date") or (date.isoformat() if date else "")).strip()
+                )
+                old_line = clean_line(action.get("old_line"))
+                new_line = clean_line(action.get("new_line"))
+                if not date or not new_date or not old_line or not new_line:
+                    fail("修改需要 date、old_line、new_line", action)
+                    continue
+                if not take_line(date.isoformat(), old_line):
+                    fail("找不到要修改的原日程行", action)
+                    continue
+                pending.append((new_date.isoformat(), new_line))
+                dirty.add(new_date.isoformat())
+                changes.append(
+                    {
+                        "type": "update",
+                        "date": new_date.isoformat(),
+                        "from_date": date.isoformat(),
+                        "old_line": old_line,
+                        "line": new_line,
+                    }
+                )
+                continue
+
+            if action_type == "move":
+                from_date = _valid_date(str(action.get("from_date") or "").strip())
+                to_date = _valid_date(str(action.get("to_date") or "").strip())
+                line = clean_line(action.get("line"))
+                new_line = clean_line(action.get("new_line") or line)
+                if not from_date or not to_date or not line:
+                    fail("移动需要 from_date、line、to_date", action)
+                    continue
+                if not take_line(from_date.isoformat(), line):
+                    fail("找不到要移动的原日程行", action)
+                    continue
+                pending.append((to_date.isoformat(), new_line))
+                dirty.add(to_date.isoformat())
+                changes.append(
+                    {
+                        "type": "move",
+                        "date": to_date.isoformat(),
+                        "from_date": from_date.isoformat(),
+                        "line": new_line,
+                        "old_line": line,
+                    }
+                )
+                continue
+
+            if action_type == "delete":
+                date = _valid_date(str(action.get("date") or "").strip())
+                line = clean_line(action.get("line"))
+                if not date or not line:
+                    fail("删除需要 date、line", action)
+                    continue
+                if not take_line(date.isoformat(), line):
+                    fail("找不到要删除的日程行", action)
+                    continue
+                changes.append(
+                    {"type": "delete", "date": date.isoformat(), "line": line}
+                )
+                continue
+
+            if action_type == "shift":
+                after_date = _valid_date(str(action.get("after_date") or "").strip())
+                try:
+                    days = int(action.get("days") or 0)
+                except (TypeError, ValueError):
+                    days = 0
+                scope = str(action.get("scope") or "general").lower()
+                if scope not in {"general", "all"}:
+                    scope = "general"
+                if not after_date or days == 0 or abs(days) > 30:
+                    fail("整体后移需要 after_date 和 1–30 天", action)
+                    continue
+                selected: list[tuple[str, str]] = []
+                for date_text in sorted(lines_by_date):
+                    if date_text <= after_date.isoformat():
+                        continue
+                    for item in list(lines_by_date[date_text]):
+                        if scope == "general" and looks_like_meeting(item):
+                            continue
+                        counts = _event_kind_counts(item)
+                        if scope == "all" or counts["general"] > 0:
+                            selected.append((date_text, item))
+                if not selected:
+                    fail("该日期之后没有可移动的日程", action)
+                    continue
+                for date_text, item in selected:
+                    lines_by_date[date_text].remove(item)
+                    dirty.add(date_text)
+                for date_text, item in selected:
+                    target = (
+                        dt.date.fromisoformat(date_text) + dt.timedelta(days=days)
+                    ).isoformat()
+                    pending.append((target, item))
+                    dirty.add(target)
+                changes.append(
+                    {
+                        "type": "shift",
+                        "date": after_date.isoformat(),
+                        "days": days,
+                        "scope": scope,
+                        "count": len(selected),
+                    }
+                )
+                continue
+
+            if action_type == "insert":
+                date = _valid_date(str(action.get("date") or "").strip())
+                new_line = clean_line(action.get("line"))
+                try:
+                    days = int(action.get("shift") or 1)
+                except (TypeError, ValueError):
+                    days = 1
+                if not date or not new_line or days == 0 or abs(days) > 30:
+                    fail("插入需要 date、line 和 1–30 天的顺延", action)
+                    continue
+                date_text = date.isoformat()
+                if new_line in lines_by_date.get(date_text, []):
+                    fail("该日期已有相同内容", action)
+                    continue
+                selected: list[tuple[str, str]] = []
+                for source_date in sorted(lines_by_date):
+                    if source_date < date_text:
+                        continue
+                    for item in list(lines_by_date[source_date]):
+                        if looks_like_meeting(item):
+                            continue
+                        selected.append((source_date, item))
+                for source_date, item in selected:
+                    lines_by_date[source_date].remove(item)
+                    dirty.add(source_date)
+                for source_date, item in selected:
+                    target = (
+                        dt.date.fromisoformat(source_date) + dt.timedelta(days=days)
+                    ).isoformat()
+                    pending.append((target, item))
+                    dirty.add(target)
+                pending.append((date_text, new_line))
+                dirty.add(date_text)
+                changes.append(
+                    {
+                        "type": "insert",
+                        "date": date_text,
+                        "line": new_line,
+                        "count": len(selected),
+                        "days": days,
+                    }
+                )
+                continue
+
+            fail("不支持的操作类型", action)
+
+        for date_text, line in pending:
+            items = lines_by_date.setdefault(date_text, [])
+            if line not in items:
+                items.append(line)
+            dirty.add(date_text)
+
+        now_iso = _iso_now()
+        for date_text in dirty:
+            event = "\n".join(lines_by_date.get(date_text, [])).strip()
+            db.execute(
+                """
+                INSERT INTO days(date, event, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET event = excluded.event, updated_at = excluded.updated_at
+                """,
+                (date_text, event, now_iso),
+            )
+        db.commit()
+
+        image_dates = {
+            row["date"]
+            for row in db.execute("SELECT DISTINCT date FROM images")
+        }
+        dots = {}
+        for date_text in dirty:
+            event = "\n".join(lines_by_date.get(date_text, [])).strip()
+            counts = (
+                _event_kind_counts(event)
+                if event
+                else {"interview": 0, "general": 0}
+            )
+            if not event and date_text in image_dates:
+                counts["general"] = 1
+            dots[date_text] = counts
+
+        return {
+            "added": added,
+            "skipped": skipped,
+            "changes": changes,
+            "failed": failed,
+            "dots": dots,
+        }
+
     def chat_reply(
         message: str,
         history: list[dict],
@@ -648,25 +913,37 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         weekday = WEEKDAY_CN[now.weekday()]
         tz_name = os.environ.get("APP_TZ", "Asia/Shanghai")
         snapshot = chat_snapshot()
-        system_prompt = f"""你是「日程」应用里的 AI 助手，帮用户查期和排期。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
-最近 120 天已有日程（每行日期: 内容）：
+        system_prompt = f"""你是「日程」应用里的 AI 助手，帮用户查期、排期和改期。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
+最近 120 天已有日程（日期下一行一条，行首 - 后面是当天事件原文）：
 {snapshot}
 
 你可以：
 1. 查期：根据上面已有日程，回答某天、某时间段是否有空、有哪些安排。没有记录就说空闲；不要编造不存在的日程。
-2. 排期：用户明确要求新增/安排/记录日程时，生成 actions 写入日历；如果缺少日期、时间、事项等关键信息，先在 reply 里追问，不要猜。
+2. 排期/改期：用户明确要求新增、修改、移动、删除或整体后移日程时，输出 actions；缺少日期、时间、事项等关键信息时先在 reply 里追问，不要猜。
 
 只输出严格 JSON，不要 markdown，不要解释：
-{{"reply":"给用户看的中文回复","actions":[{{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"interview","company":"公司名","role":"岗位","address":"地址或会议信息"}},{{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"general","title":"事项","address":"地点或会议信息"}}]}}
+{{"reply":"给用户看的中文回复","actions":[
+  {{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"interview","company":"公司名","role":"岗位","address":"地址或会议信息"}},
+  {{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"general","title":"事项","address":"地点或会议信息"}},
+  {{"type":"update","date":"YYYY-MM-DD","old_line":"快照里的原文","new_date":"YYYY-MM-DD","new_line":"修改后的内容"}},
+  {{"type":"move","from_date":"YYYY-MM-DD","line":"快照里的原文","to_date":"YYYY-MM-DD","new_line":"移动后的内容，可省略"}},
+  {{"type":"delete","date":"YYYY-MM-DD","line":"快照里的原文"}},
+  {{"type":"shift","after_date":"YYYY-MM-DD","days":1,"scope":"general"}},
+  {{"type":"insert","date":"YYYY-MM-DD","line":"新的日程内容","shift":1}}
+]}}
 
 规则：
-1. 只有用户明确要求新增/安排/记录时才输出 create actions；只是查期、提问或聊天时 actions 为空。
+1. 只有用户明确要求新增/修改/移动/删除/整体后移时才输出 actions；只是查期、提问或聊天时 actions 为空。
 2. date 必须是绝对日期，相对日期按当前时间换算；time 用 24 小时制 HH:MM，不确定就留空；不要用当前时间填充用户没说的时间。
-3. 面试/招聘相关 kind=interview，填 company、role、address；其他日程 kind=general，填 title、address，company/role 留空。
-4. 不支持修改或删除已有日程；用户提出时在 reply 里说明去当天页手动修改。
-5. 用户发截图时：解析截图里明确出现的日程；如果用户只是询问截图内容，只回答不写入；如果用户要求导入，或只发截图没有提问，则生成 actions 导入。
-6. 同一日程已存在就不要重复创建，在 reply 里说明；不要输出 type 不是 create 的 action。
-7. reply 要简洁、自然、中文，不要提到 JSON 或内部规则；使用纯文本，不要 markdown 格式。"""
+3. create：面试/招聘相关 kind=interview，填 company、role、address；其他日程 kind=general，填 title、address，company/role 留空；已存在的日程不要重复 create。
+4. update：修改某条已有日程的内容、时间或日期；old_line 必须与快照里某一行完全一致（去掉首尾空格），new_line 是修改后的整行内容。
+5. move：把某条已有日程移到另一天；from_date、line 必须与快照完全对应，to_date 是目标日期。
+6. delete：删除某条已有日程；line 必须与快照里的原文完全一致。
+7. shift：把 after_date 之后的所有通用日程整体平移 days 天；scope=general 时会跳过会议/面试；这是“其他往后推”的首选，不要用 create 复制。
+8. insert：在 date 插入一条新日程 line，并把从该日起的原有通用学习任务整体顺延 shift 天，会议/面试保持不动；用于“X日改成Y，其他往后推”这类插入+顺延需求，不要用 update 覆盖原任务。若用户只说“把X日改成Y”而没有“往后推”，才用 update 直接替换。
+9. 修改/移动/删除前先确认 old_line/line 在快照中存在；找不到或不确定就追问，不要编造原文。用户没要求改的面试/会议不要动。
+10. 用户发截图时：解析截图里明确出现的日程；如果用户只是询问截图内容，只回答不写入；如果用户要求导入，或只发截图没有提问，则生成 create actions。
+11. reply 要简洁、自然、中文，说明做了哪些修改、移动了几条；不要提到 JSON 或内部规则；使用纯文本，不要 markdown 格式。"""
 
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         for item in history[-12:]:
@@ -1044,19 +1321,10 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             app.logger.warning("AI chat failed: %s", exc)
             return jsonify({"error": str(exc)}), 502
 
-        actions = []
-        for action in raw_actions:
-            action_type = str(action.get("type") or "create").lower()
-            if action_type == "create":
-                actions.append(action)
-        events = _normalize_ai_events({"events": actions})
-        added, skipped = apply_ai_events(events)
-        missing = len(actions) - len(events)
-        if missing > 0:
-            reply += f"\n（有 {missing} 条日程缺少日期/时间或格式不完整，未写入，请补充。）"
-        return jsonify(
-            {"reply": reply, "added": added, "skipped": skipped}
-        )
+        result = apply_chat_actions(raw_actions)
+        if result["failed"]:
+            reply += f"\n（有 {len(result['failed'])} 个操作未执行，请核对原日程或补充信息。）"
+        return jsonify({"reply": reply, **result})
 
     @app.get("/uploads/<date_str>/<name>")
     @login_required

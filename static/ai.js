@@ -47,21 +47,93 @@
     return Number(parts[1]) + '月' + Number(parts[2]) + '日';
   }
 
+  function changeText(change) {
+    var type = change.type || 'create';
+    if (type === 'create') {
+      return '已添加 · ' + dateLabel(change.date) + ' · ' + change.line;
+    }
+    if (type === 'update') {
+      return (
+        '已修改 · ' + dateLabel(change.date) + ' · ' +
+        (change.old_line || '') + ' → ' + change.line
+      );
+    }
+    if (type === 'move') {
+      return (
+        '已移动 · ' + dateLabel(change.from_date) + ' → ' +
+        dateLabel(change.date) + ' · ' + change.line
+      );
+    }
+    if (type === 'delete') {
+      return '已删除 · ' + dateLabel(change.date) + ' · ' + change.line;
+    }
+    if (type === 'shift') {
+      var scope = change.scope === 'all' ? '全部日程' : '通用日程';
+      return (
+        '已整体后移 ' + change.count + ' 条' + scope +
+        '（' + dateLabel(change.date) + '之后 ' + change.days + ' 天）'
+      );
+    }
+    if (type === 'insert') {
+      return (
+        '已插入 · ' + dateLabel(change.date) + ' · ' + change.line +
+        '（顺延 ' + change.count + ' 条）'
+      );
+    }
+    return '';
+  }
+
+  function appendChanges(list, changes) {
+    changes.forEach(function (change) {
+      var text = changeText(change);
+      if (!text) {
+        return;
+      }
+      var date = change.date;
+      if (change.type === 'move') {
+        date = change.date;
+      }
+      if (
+        date &&
+        (change.type === 'create' ||
+          change.type === 'update' ||
+          change.type === 'move' ||
+          change.type === 'insert')
+      ) {
+        var link = document.createElement('a');
+        link.href = dayTemplate.replace('1970-01-01', date);
+        link.textContent = text;
+        list.appendChild(link);
+      } else {
+        var row = document.createElement('span');
+        row.className = 'ai-change';
+        row.textContent = text;
+        list.appendChild(row);
+      }
+    });
+  }
+
   function addMessage(role, text, options) {
     var opts = options || {};
     var item = document.createElement('div');
     item.className = 'ai-msg ai-msg-' + role + (opts.error ? ' is-error' : '');
     item.textContent = String(text || '');
-    if (opts.actions && opts.actions.length) {
+    var changes = opts.changes || [];
+    if (changes.length) {
       var list = document.createElement('div');
       list.className = 'ai-msg-actions';
+      appendChanges(list, changes);
+      item.appendChild(list);
+    } else if (opts.actions && opts.actions.length) {
+      var actionList = document.createElement('div');
+      actionList.className = 'ai-msg-actions';
       opts.actions.forEach(function (event) {
         var link = document.createElement('a');
         link.href = dayTemplate.replace('1970-01-01', event.date);
         link.textContent = dateLabel(event.date) + ' · ' + event.line;
-        list.appendChild(link);
+        actionList.appendChild(link);
       });
-      item.appendChild(list);
+      item.appendChild(actionList);
     }
     if (messagesEl) {
       messagesEl.appendChild(item);
@@ -98,6 +170,48 @@
       var dot = document.createElement('span');
       dot.className = 'dot ' + (event.kind === 'interview' ? 'dot-interview' : 'dot-general');
       dots.appendChild(dot);
+    });
+  }
+
+  function setCellDots(date, counts) {
+    var cell = findCell(date);
+    if (!cell) {
+      return;
+    }
+    var old = cell.querySelector('.dots');
+    if (old) {
+      old.remove();
+    }
+    var interviews = Number(counts.interview || 0);
+    var general = Number(counts.general || 0);
+    if (!interviews && !general) {
+      cell.setAttribute('aria-label', date);
+      return;
+    }
+    cell.setAttribute('aria-label', date + '，有日程');
+    var dots = document.createElement('span');
+    dots.className = 'dots';
+    dots.setAttribute('aria-hidden', 'true');
+    var i;
+    for (i = 0; i < interviews; i += 1) {
+      var blue = document.createElement('span');
+      blue.className = 'dot dot-interview';
+      dots.appendChild(blue);
+    }
+    for (i = 0; i < general; i += 1) {
+      var white = document.createElement('span');
+      white.className = 'dot dot-general';
+      dots.appendChild(white);
+    }
+    cell.appendChild(dots);
+  }
+
+  function applyDots(dots) {
+    if (!dots || typeof dots !== 'object') {
+      return;
+    }
+    Object.keys(dots).forEach(function (date) {
+      setCellDots(date, dots[date] || {});
     });
   }
 
@@ -208,8 +322,17 @@
       .then(function (data) {
         var reply = data.reply || '已处理。';
         var added = data.added || [];
-        addMessage('assistant', reply, { actions: added });
-        markAdded(added);
+        var changes = data.changes || [];
+        addMessage(
+          'assistant',
+          reply,
+          changes.length ? { changes: changes } : { actions: added }
+        );
+        if (data.dots) {
+          applyDots(data.dots);
+        } else {
+          markAdded(added);
+        }
         history.push({ role: 'assistant', content: reply });
         clearAttachment();
       })
