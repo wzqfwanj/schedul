@@ -1,6 +1,6 @@
 # 日程 · Schedul
 
-> 一个灰色单主题的极简日程表：月历一览、当天事件自动编辑、`Ctrl` + `V` 粘贴截图收纳，以及 AI 截图导入（面试 + 通用日程）。
+> 一个灰色单主题的极简日程表：月历一览、当天事件自动编辑、`Ctrl` + `V` 粘贴截图收纳，以及可以查期、排期和导入截图的 AI 对话框。
 
 Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、无外部服务、无前端依赖。数据全部保存在本机（SQLite 数据库 + 截图文件），适合个人自托管。
 
@@ -12,11 +12,11 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 
 | 月历 + AI 导入 | 当天页 |
 | :---: | :---: |
-| ![月历 + AI 导入](docs/screenshots/calendar.png) | ![当天页](docs/screenshots/day.png) |
+| ![月历 + AI 助手](docs/screenshots/calendar.png) | ![当天页](docs/screenshots/day.png) |
 
-| 资料弹窗 | AI 解析结果 |
+| 资料弹窗 | AI 对话 |
 | :---: | :---: |
-| ![资料弹窗](docs/screenshots/data-modal.png) | ![AI 解析结果](docs/screenshots/ai-import.png) |
+| ![资料弹窗](docs/screenshots/data-modal.png) | ![AI 对话](docs/screenshots/ai-import.png) |
 
 ![移动端](docs/screenshots/mobile.png)
 
@@ -27,13 +27,17 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | `calendar.png` | 月历 + 右侧 AI 导入 |
 | `day.png` | 当天页（事件直接编辑 + 资料标签） |
 | `data-modal.png` | 点击「资料」标签弹出的截图收纳框 |
-| `ai-import.png` | AI 截图识别结果（面试 + 通用日程） |
+| `ai-import.png` | AI 对话框：查期、排期与截图导入 |
 | `mobile.png` | 移动端布局（约 390px 宽） |
 
 ## 功能
 
 - **月历一览**：周一开头的月视图，可切换上/下月、「今天」；有事件或截图的日期显示圆点：**面试日程为蓝点、通用日程为白点**，每个日程一个点，同一天多条面试会显示多个蓝点，两类都有时蓝白并排。判断面试的规则：包含「面试」、`公司：`/`岗位：`，或岗位关键词与视频会议/电话等组合（例如「飞书视频会议：万志强 全栈」）。
-- **AI 截图导入**：月历右侧的 AI 窗口支持 `Ctrl+V` 粘贴、拖拽或选择聊天/招聘/日历截图；视觉模型会同时识别两类日程：**面试**（时间、公司、岗位、地址）和**通用日程**（会议、约见、课程、出行、缴费、取快递、待办等，时间、事项、地址），自动追加到对应日期的事件里，日历立即标记。识别结果带「面试」/「日程」类型标签，可点击进入当天核对；截图里没有具体时间时不会猜测，会标注「未识别时间」。
+- **AI 对话框（查期 / 排期 / 截图导入）**：月历右侧可以直接和 AI 对话。
+  - **查期**：问「本周有什么安排」「明天下午有空吗」「11月25日有什么」等，AI 根据未来 120 天的日历回答空档和已有安排，不会编造。
+  - **排期**：说「帮我排下周三下午3点面试，公司字节跳动，岗位 AI 开发，腾讯会议…」，AI 会自动写入对应日期；信息不够时会先追问，不会猜。
+  - **截图导入**：也可以直接粘贴/拖入截图，让 AI 解析面试和通用日程（时间、公司、岗位、事项、地址），支持一次多张/多条。
+  - AI 回复里会列出已加入的日程链接，点击进入当天核对；同一天多条日程在日历上显示对应数量的蓝点/白点。AI 只追加、不覆盖已有事件，不直接删除或修改已有日程。
 - **事件直接编辑**：点击事件区域就能直接输入/修改，不需要再点「编辑」；停止输入 600ms 自动保存（失焦、切到后台、离开页面也会保存，失败自动重试），无需点按钮。
 - **资料标签**：在编辑时输入 `<资料>`（或点「插入资料」），会直接变成可点击的「资料 N」标签；每个标签有自己独立的一组截图，点标签弹出该组的截图收纳框，N 为该组截图数量。
 - **截图收纳**：点开资料标签后，在弹窗里按 `Ctrl` + `V`（macOS 为 `Cmd` + `V`）直接粘贴剪贴板截图；也可点击虚线区域选择文件或拖拽上传，支持一次多张。收起弹窗后截图仍在对应标签里。
@@ -117,11 +121,12 @@ python app.py
 
 浏览器打开 <http://127.0.0.1:8000>，会跳转到登录页；输入上面设置的账号密码进入月历。
 
-想启用右侧 AI 截图导入，再配置百炼视觉模型（不配置时其他功能完全正常，AI 窗口会提示未配置）：
+想启用右侧 AI 对话框，再配置百炼模型（不配置时其他功能完全正常，AI 窗口会提示未配置）：
 
 ```powershell
 $env:DASHSCOPE_API_KEY = "sk-..."
 $env:VISION_MODEL = "qwen3-vl-plus"
+$env:CHAT_MODEL = "qwen3-vl-plus"
 # Token Plan / 工作空间专用地址按百炼控制台填写；默认使用 DashScope 兼容接口
 $env:VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 ```
@@ -129,6 +134,7 @@ $env:VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/co
 ```bash
 export DASHSCOPE_API_KEY="sk-..."
 export VISION_MODEL="qwen3-vl-plus"
+export CHAT_MODEL="qwen3-vl-plus"
 export VISION_API_URL="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 ```
 
@@ -183,9 +189,10 @@ Windows 可用 `sqlite3.exe` 执行同样的 `.backup`，再对 `data\uploads` �
 | `DATA_DIR` | 空 | 数据目录。留空表示项目根目录下的 `data/`；生产环境建议指定独立路径（如 `/var/lib/schedul`） |
 | `APP_TZ` | `Asia/Shanghai` | 时区，决定「今天」以及页面上事件/截图时间的显示 |
 | `COOKIE_SECURE` | `0` | 设为 `1` 时会话 Cookie 仅通过 HTTPS 传输。**HTTPS 部署必须设为 1**；纯 HTTP 调试时保持 0，否则登录后 Cookie 不会发送、表现为登录无效 |
-| `DASHSCOPE_API_KEY` | 空 | 阿里云百炼 API Key；留空时「AI 截图导入」不可用，其余功能正常 |
+| `DASHSCOPE_API_KEY` | 空 | 阿里云百炼 API Key；留空时「AI 助手」不可用，其余功能正常 |
 | `VISION_API_URL` | DashScope 兼容接口 | OpenAI 兼容的 chat/completions 地址。百炼 Token Plan / 工作空间专用地址按控制台填写 |
 | `VISION_MODEL` | `qwen3-vl-plus` | 截图解析使用的视觉模型名 |
+| `CHAT_MODEL` | 同 `VISION_MODEL` | AI 对话框使用的模型名；可单独指定文本模型 |
 | `HOST` | `127.0.0.1` | 仅 `python app.py` 开发服务器使用：监听地址。容器内可设为 `0.0.0.0` |
 | `PORT` | `8000` | 仅 `python app.py` 开发服务器使用：监听端口。waitress 的监听地址由 `--listen` 参数决定 |
 
@@ -201,7 +208,7 @@ Windows 可用 `sqlite3.exe` 执行同样的 `.backup`，再对 `data\uploads` �
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/` | 月历 + 右侧 AI 截图导入窗口。可选查询参数 `?month=YYYY-MM` 查看指定月份 |
+| `GET` | `/` | 月历 + 右侧 AI 助手对话框（查期、排期、截图导入）。可选查询参数 `?month=YYYY-MM` 查看指定月份 |
 | `GET` | `/day/<YYYY-MM-DD>` | 当天页：事件直接编辑 + 资料截图弹窗；非法日期返回 404 |
 | `GET` | `/login` | 登录页（已登录则跳回月历） |
 | `POST` | `/login` | 表单登录，字段 `username`、`password`、可选 `next`；失败 401，限流 429 |
@@ -215,7 +222,8 @@ JSON / 文件 API：
 | `PUT` | `/api/days/<YYYY-MM-DD>` | JSON：`{"event": "文本"}`，最长 20000 字 | `200` `{ok: true, updated_at, time_label}`；格式/类型/超长 400，日期非法 404 |
 | `POST` | `/api/days/<YYYY-MM-DD>/images?slot=N` | 原始图片字节（请求体即文件）；`slot` 为第几组 `<资料>`（从 0 开始，默认 0，最大 99）；`Content-Type` 为 `image/png`、`image/jpeg`、`image/gif` 或 `image/webp` | `201` `{"image": {id, date, slot, url, download_url, mime, size, size_label, created_at, time_label}}`；空请求 400、slot 非法 400、超 10MB 413、非位图 415 |
 | `DELETE` | `/api/images/<id>` | — | `200` `{ok: true}`；不存在 404 |
-| `POST` | `/api/ai/parse` | 原始图片字节（截图），`Content-Type` 为图片类型 | `200` `{added: [...], skipped: [...], events: [...]}`；未配置 Key 503、同 IP 频繁请求 429、模型失败 502、非图片 415 |
+| `POST` | `/api/ai/chat` | multipart：`message`、可选 `image` 截图、`history` JSON 数组（最近对话） | `200` `{reply, added: [...], skipped: [...]}`；未配置 Key 503、同 IP 频繁请求 429、模型失败 502、非图片 415 |
+| `POST` | `/api/ai/parse` | 原始图片字节（截图），`Content-Type` 为图片类型（兼容旧接口） | `200` `{added: [...], skipped: [...], events: [...]}`；未配置 Key 503、同 IP 频繁请求 429、模型失败 502、非图片 415 |
 | `GET` | `/uploads/<YYYY-MM-DD>/<文件名>` | 可选 `?download=1` 以附件形式下载 | 返回图片；文件名/日期不合法或不存在 404 |
 
 接口示例（需要先登录拿到会话 Cookie）：
@@ -248,7 +256,7 @@ curl -b cookies.txt -X DELETE http://127.0.0.1:8000/api/images/1
 python -m unittest discover -s tests -v
 ```
 
-当前共 34 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、面试/通用日程圆点类型与多日程圆点数量、截图按 `<资料>` 分组上传/查看/下载/删除、AI 解析结果校验与写入/去重/时间格式归一化、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
+当前共 37 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、面试/通用日程圆点类型与多日程圆点数量、截图按 `<资料>` 分组上传/查看/下载/删除、AI 对话查期/排期/写入/去重、AI 解析结果校验与时间格式归一化、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
 
 ## 安全说明
 
@@ -259,7 +267,7 @@ python -m unittest discover -s tests -v
 - **会话**：Flask 签名 Cookie，`HttpOnly`、`SameSite=Lax`，有效期 30 天；更换 `SECRET_KEY` 可让所有已登录会话立即失效。退出登录使用 POST 表单。
 - **登录限流**：同一 IP 在 10 分钟内失败 10 次后暂时拒绝登录；限流计数保存在进程内存中，重启后清空。反代部署时所有请求的 `remote_addr` 都是 `127.0.0.1`，即限流按整个站点统一计数（单用户场景影响不大；若将来改成多用户需自行处理真实 IP）。
 - **上传限制**：单张截图最大 10MB，只接受 PNG / JPG / GIF / WebP 位图（校验文件头魔数，拒绝 SVG 以防 XSS）；文件以随机文件名保存并按日期分目录，路径参数经过白名单校验；截图访问、下载均需登录。
-- **AI 截图导入**：截图会发送给配置的视觉模型服务（阿里云百炼）解析，应用本身不保存这张原图；`DASHSCOPE_API_KEY` 只存在服务端环境变量中，不会下发到浏览器。接口需要登录，并按 IP 做了 2 秒限频以控制误触费用。模型输出只用于追加事件文本，不会覆盖已有内容；同日重复的条目会自动跳过。
+- **AI 对话框**：对话文字和截图会发送给配置的模型服务（阿里云百炼）处理，应用本身不保存聊天记录或截图原图；`DASHSCOPE_API_KEY` 只存在服务端环境变量中，不会下发到浏览器。接口需要登录，并按 IP 做了 2 秒限频以控制误触费用。模型只能追加事件文本，不能修改/删除已有内容；同日重复的条目会自动跳过。
 - **CSRF**：事件保存使用 JSON `PUT`，截图为原始请求体上传，跨站表单无法直接伪造；会话 Cookie 使用 `SameSite=Lax`，进一步降低跨站请求风险。登录/登出为同源表单提交。若需更高强度，可在前置 nginx 增加额外校验。
 - **安全响应头**：CSP（禁止内联脚本与第三方资源）、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`。
 - **建议**：不要把数据库/截图目录暴露为静态目录；`data/` 内含隐私内容，定期备份并限制文件权限；如仅个人使用，可只允许自己的 IP 或通过 VPN 访问。

@@ -110,10 +110,11 @@ SECRET_KEY=replace-with-output-of-openssl-rand-hex-32
 DATA_DIR=/var/lib/schedul
 APP_TZ=Asia/Shanghai
 COOKIE_SECURE=0
-# 可选：AI 截图解析（阿里云百炼视觉模型）；不填则 AI 导入不可用
+# 可选：AI 助手（阿里云百炼，查期/排期/截图导入）；不填则 AI 不可用
 DASHSCOPE_API_KEY=
 VISION_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
 VISION_MODEL=qwen3-vl-plus
+CHAT_MODEL=qwen3-vl-plus
 EOF
 
 sudo chown root:root /etc/schedul.env
@@ -125,7 +126,7 @@ sudo chmod 600 /etc/schedul.env
 - `SECRET_KEY` 用于签名登录 Cookie；固定它，重启服务不会踢掉已登录会话。
 - `DATA_DIR=/var/lib/schedul` 与 systemd 单元的 `StateDirectory=schedul` 对应，数据不放在代码目录里，升级更安全。
 - `COOKIE_SECURE` 先保持 `0` 便于用 HTTP 做健康检查；**完成第 7 节 HTTPS 后必须改为 `1` 并重启**。纯 HTTP 下设为 1 会导致登录无效（Cookie 不发送）。
-- `DASHSCOPE_API_KEY` 等三项用于 AI 截图导入。可以直接用百炼控制台的 API Key；如果使用 Token Plan / 工作空间专用域名，把 `VISION_API_URL` 填成控制台给出的 OpenAI 兼容 `chat/completions` 地址。不填 Key 时应用其他功能正常，只是 AI 窗口会提示未配置。
+- `DASHSCOPE_API_KEY` 等用于 AI 助手（查期、排期、截图导入）。可以直接用百炼控制台的 API Key；如果使用 Token Plan / 工作空间专用域名，把 `VISION_API_URL` 填成控制台给出的 OpenAI 兼容 `chat/completions` 地址。`CHAT_MODEL` 可单独指定对话模型，留空则跟随 `VISION_MODEL`。不填 Key 时应用其他功能正常，只是 AI 窗口会提示未配置。
 - 不想用 `/var/lib/schedul` 时，同时修改 `DATA_DIR`、systemd 单元中的 `StateDirectory` / `ReadWritePaths`，并确保目录归 `schedul` 所有。
 
 ## 5. 配置 systemd 服务

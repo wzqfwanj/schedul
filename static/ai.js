@@ -8,42 +8,66 @@
 
   var api = panel.getAttribute('data-api');
   var dayTemplate = panel.getAttribute('data-day-template') || '/day/1970-01-01';
-  var drop = document.getElementById('ai-drop');
+  var messagesEl = document.getElementById('ai-messages');
+  var form = document.getElementById('ai-form');
+  var input = document.getElementById('ai-input');
+  var sendBtn = document.getElementById('ai-send');
   var fileInput = document.getElementById('ai-file');
+  var pickBtn = document.getElementById('ai-pick');
   var statusEl = document.getElementById('ai-status');
-  var resultEl = document.getElementById('ai-result');
-  var previewEl = document.getElementById('ai-preview');
+  var suggestionsEl = document.getElementById('ai-suggestions');
+  var attachEl = document.getElementById('ai-attach');
+  var attachImg = document.getElementById('ai-attach-img');
+  var attachName = document.getElementById('ai-attach-name');
+  var attachRemove = document.getElementById('ai-attach-remove');
 
+  var history = [];
   var busy = false;
-  var previewUrl = '';
+  var attachment = null;
+  var attachmentUrl = '';
+  var MAX_IMAGE = 10 * 1024 * 1024;
 
-  function setStatus(text, state) {
-    if (!statusEl) {
-      return;
-    }
-    statusEl.textContent = text || '';
-    statusEl.className = 'status' + (state ? ' ' + state : '');
-  }
-
-  function clearPreview() {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      previewUrl = '';
-    }
-    if (previewEl) {
-      previewEl.hidden = true;
-      previewEl.removeAttribute('src');
+  function setStatus(text) {
+    if (statusEl) {
+      statusEl.textContent = text || '';
     }
   }
 
-  function showPreview(file) {
-    clearPreview();
-    if (!previewEl || !window.URL || !URL.createObjectURL) {
-      return;
+  function scrollMessages() {
+    if (messagesEl) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-    previewUrl = URL.createObjectURL(file);
-    previewEl.src = previewUrl;
-    previewEl.hidden = false;
+  }
+
+  function dateLabel(date) {
+    var parts = String(date).split('-');
+    if (parts.length !== 3) {
+      return date;
+    }
+    return Number(parts[1]) + '月' + Number(parts[2]) + '日';
+  }
+
+  function addMessage(role, text, options) {
+    var opts = options || {};
+    var item = document.createElement('div');
+    item.className = 'ai-msg ai-msg-' + role + (opts.error ? ' is-error' : '');
+    item.textContent = String(text || '');
+    if (opts.actions && opts.actions.length) {
+      var list = document.createElement('div');
+      list.className = 'ai-msg-actions';
+      opts.actions.forEach(function (event) {
+        var link = document.createElement('a');
+        link.href = dayTemplate.replace('1970-01-01', event.date);
+        link.textContent = dateLabel(event.date) + ' · ' + event.line;
+        list.appendChild(link);
+      });
+      item.appendChild(list);
+    }
+    if (messagesEl) {
+      messagesEl.appendChild(item);
+      scrollMessages();
+    }
+    return item;
   }
 
   function findCell(date) {
@@ -57,263 +81,211 @@
     return null;
   }
 
-  function markDate(date) {
-    var cell = findCell(date);
-    if (!cell) {
-      return;
-    }
-    cell.setAttribute('aria-label', date + '，有日程');
-    if (!cell.querySelector('.dot')) {
+  function markAdded(events) {
+    (events || []).forEach(function (event) {
+      var cell = findCell(event.date);
+      if (!cell) {
+        return;
+      }
+      cell.setAttribute('aria-label', event.date + '，有日程');
+      var dots = cell.querySelector('.dots');
+      if (!dots) {
+        dots = document.createElement('span');
+        dots.className = 'dots';
+        dots.setAttribute('aria-hidden', 'true');
+        cell.appendChild(dots);
+      }
       var dot = document.createElement('span');
-      dot.className = 'dot';
-      dot.setAttribute('aria-hidden', 'true');
-      cell.appendChild(dot);
-    }
-  }
-
-  function dateLabel(date) {
-    var parts = String(date).split('-');
-    if (parts.length !== 3) {
-      return date;
-    }
-    return Number(parts[1]) + '月' + Number(parts[2]) + '日';
-  }
-
-  function makeItem(event, skipped) {
-    var link = document.createElement('a');
-    link.className = 'ai-item' + (skipped ? ' is-skipped' : '');
-    link.href = dayTemplate.replace('1970-01-01', event.date);
-    link.title = skipped ? '这条已经存在，未重复添加' : '打开当天日程';
-
-    var head = document.createElement('span');
-    head.className = 'ai-item-head';
-
-    var date = document.createElement('span');
-    date.className = 'ai-date';
-    date.textContent = dateLabel(event.date);
-
-    var time = document.createElement('span');
-    time.className = 'ai-time' + (event.time ? '' : ' is-unset');
-    time.textContent = event.time || '未识别时间';
-
-    var isInterview = event.kind === 'interview';
-    var kind = document.createElement('span');
-    kind.className = 'ai-kind';
-    kind.textContent = isInterview ? '面试' : '日程';
-
-    head.appendChild(date);
-    head.appendChild(time);
-    head.appendChild(kind);
-    if (skipped) {
-      var skip = document.createElement('span');
-      skip.className = 'ai-skip';
-      skip.textContent = '已存在';
-      head.appendChild(skip);
-    }
-
-    var fields = document.createElement('span');
-    fields.className = 'ai-fields';
-    var rows = [];
-    if (!isInterview) {
-      if (event.title) {
-        rows.push('事项：' + event.title);
-      }
-      if (event.address) {
-        rows.push('地址：' + event.address);
-      }
-      if (!rows.length && event.company) {
-        rows.push('公司：' + event.company);
-      }
-      if (!rows.length && event.role) {
-        rows.push('岗位：' + event.role);
-      }
-    } else {
-      if (event.company) {
-        rows.push('公司：' + event.company);
-      }
-      if (event.role) {
-        rows.push('岗位：' + event.role);
-      }
-      if (event.address) {
-        rows.push('地址：' + event.address);
-      }
-      if (!rows.length && event.title) {
-        rows.push(event.title);
-      }
-    }
-    if (!rows.length && event.note) {
-      rows.push(event.note);
-    }
-    rows.forEach(function (text) {
-      var field = document.createElement('span');
-      field.className = 'ai-field';
-      field.textContent = text;
-      fields.appendChild(field);
+      dot.className = 'dot ' + (event.kind === 'interview' ? 'dot-interview' : 'dot-general');
+      dots.appendChild(dot);
     });
-
-    link.appendChild(head);
-    link.appendChild(fields);
-    return link;
   }
 
-  function renderError(message) {
-    resultEl.textContent = '';
-    resultEl.hidden = false;
-    var text = document.createElement('p');
-    text.className = 'ai-err';
-    text.textContent = message;
-    resultEl.appendChild(text);
-  }
-
-  function renderResult(data) {
-    var added = data.added || [];
-    var skipped = data.skipped || [];
-    resultEl.textContent = '';
-
-    if (!added.length && !skipped.length) {
-      resultEl.hidden = false;
-      var empty = document.createElement('p');
-      empty.className = 'ai-empty';
-      empty.textContent = '没有识别到明确日程，换一张更清晰的截图试试。';
-      resultEl.appendChild(empty);
-      return;
+  function clearAttachment() {
+    if (attachmentUrl) {
+      URL.revokeObjectURL(attachmentUrl);
+      attachmentUrl = '';
     }
-
-    resultEl.hidden = false;
-    var head = document.createElement('p');
-    head.className = 'ai-result-head';
-    if (added.length) {
-      head.textContent = '已添加 ' + added.length + ' 条日程到日历';
-    } else {
-      head.textContent = '这些日程已经存在，没有重复添加';
+    attachment = null;
+    if (attachImg) {
+      attachImg.removeAttribute('src');
     }
-    resultEl.appendChild(head);
-
-    added.forEach(function (event) {
-      resultEl.appendChild(makeItem(event, false));
-      markDate(event.date);
-    });
-    skipped.forEach(function (event) {
-      resultEl.appendChild(makeItem(event, true));
-    });
-
-    var outside = 0;
-    added.concat(skipped).forEach(function (event) {
-      if (!findCell(event.date)) {
-        outside += 1;
-      }
-    });
-    var noTime = added.filter(function (event) {
-      return !event.time;
-    }).length;
-    if (noTime) {
-      var timeNote = document.createElement('p');
-      timeNote.className = 'ai-more';
-      timeNote.textContent = '有 ' + noTime + ' 条没有识别到具体时间，可以点进去补充。';
-      resultEl.appendChild(timeNote);
+    if (attachName) {
+      attachName.textContent = '';
     }
-    if (outside) {
-      var more = document.createElement('p');
-      more.className = 'ai-more';
-      more.textContent = '有 ' + outside + ' 条不在当前月份，已写入日历，切换月份可看到标记。';
-      resultEl.appendChild(more);
+    if (attachEl) {
+      attachEl.hidden = true;
+    }
+    if (fileInput) {
+      fileInput.value = '';
     }
   }
 
-  function parseImage(file) {
-    if (busy) {
-      return;
-    }
+  function setAttachment(file) {
     if (!file) {
       return;
     }
     if (file.type && file.type.indexOf('image/') !== 0) {
-      renderError('只支持粘贴图片截图。');
+      addMessage('assistant', '只支持 PNG / JPG / GIF / WebP 截图。', { error: true });
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      renderError('截图不能超过 10MB。');
+    if (file.size > MAX_IMAGE) {
+      addMessage('assistant', '截图不能超过 10MB。', { error: true });
       return;
+    }
+    clearAttachment();
+    attachment = file;
+    if (window.URL && URL.createObjectURL) {
+      attachmentUrl = URL.createObjectURL(file);
+      if (attachImg) {
+        attachImg.src = attachmentUrl;
+      }
+    }
+    if (attachName) {
+      attachName.textContent = file.name || '剪贴板截图';
+    }
+    if (attachEl) {
+      attachEl.hidden = false;
+    }
+    if (input) {
+      input.focus();
+    }
+  }
+
+  function autoGrow() {
+    if (!input) {
+      return;
+    }
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+
+  function sendMessage() {
+    if (busy) {
+      return;
+    }
+    var text = (input && input.value ? input.value : '').trim();
+    if (!text && !attachment) {
+      if (input) {
+        input.focus();
+      }
+      return;
+    }
+
+    var priorHistory = history.slice(-12);
+    var displayText = text || '（发送了一张截图）';
+    addMessage('user', displayText);
+    history.push({ role: 'user', content: text || '（发送了一张截图）' });
+    if (input) {
+      input.value = '';
+      autoGrow();
+    }
+
+    var payload = new FormData();
+    payload.append('message', text);
+    payload.append('history', JSON.stringify(priorHistory));
+    if (attachment) {
+      payload.append('image', attachment, attachment.name || 'clipboard.png');
     }
 
     busy = true;
-    drop.classList.add('is-busy');
-    drop.setAttribute('aria-busy', 'true');
-    setStatus('识别中…', '');
-    resultEl.hidden = true;
-    resultEl.textContent = '';
-    showPreview(file);
+    if (sendBtn) {
+      sendBtn.disabled = true;
+    }
+    setStatus('思考中…');
 
-    fetch(api, {
-      method: 'POST',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file
-    })
+    fetch(api, { method: 'POST', body: payload })
       .then(function (response) {
-        return response
-          .json()
-          .catch(function () {
-            return {};
-          })
-          .then(function (data) {
-            if (!response.ok) {
-              throw new Error(data.error || '识别失败（HTTP ' + response.status + '）');
-            }
-            return data;
-          });
+        return response.json().catch(function () {
+          return { error: '服务返回格式异常（HTTP ' + response.status + '）' };
+        }).then(function (data) {
+          if (!response.ok) {
+            throw new Error(data.error || ('请求失败（HTTP ' + response.status + '）'));
+          }
+          return data;
+        });
       })
       .then(function (data) {
-        renderResult(data);
-        setStatus('完成', 'is-saved');
+        var reply = data.reply || '已处理。';
+        var added = data.added || [];
+        addMessage('assistant', reply, { actions: added });
+        markAdded(added);
+        history.push({ role: 'assistant', content: reply });
+        clearAttachment();
       })
-      .catch(function (err) {
-        renderError(err.message || '识别失败，请稍后重试。');
-        setStatus('识别失败', 'is-error');
+      .catch(function (error) {
+        addMessage('assistant', '请求失败：' + error.message, { error: true });
       })
-      .finally(function () {
+      .then(function () {
         busy = false;
-        drop.classList.remove('is-busy');
-        drop.removeAttribute('aria-busy');
+        if (sendBtn) {
+          sendBtn.disabled = false;
+        }
+        setStatus('');
+        if (input) {
+          input.focus();
+        }
       });
   }
 
-  function pickFile() {
-    if (fileInput) {
-      fileInput.click();
-    }
+  if (form) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      sendMessage();
+    });
   }
 
-  if (drop) {
-    drop.addEventListener('click', pickFile);
-    drop.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
+  if (input) {
+    input.addEventListener('input', autoGrow);
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        pickFile();
+        sendMessage();
       }
     });
-    ['dragenter', 'dragover'].forEach(function (name) {
-      drop.addEventListener(name, function (event) {
-        event.preventDefault();
-        drop.classList.add('is-dragover');
-      });
-    });
-    ['dragleave', 'drop'].forEach(function (name) {
-      drop.addEventListener(name, function (event) {
-        event.preventDefault();
-        if (name === 'drop' && event.dataTransfer && event.dataTransfer.files.length) {
-          parseImage(event.dataTransfer.files[0]);
-        }
-        drop.classList.remove('is-dragover');
-      });
+  }
+
+  if (pickBtn && fileInput) {
+    pickBtn.addEventListener('click', function () {
+      fileInput.click();
     });
   }
 
   if (fileInput) {
     fileInput.addEventListener('change', function () {
       if (fileInput.files && fileInput.files.length) {
-        parseImage(fileInput.files[0]);
+        setAttachment(fileInput.files[0]);
       }
-      fileInput.value = '';
+    });
+  }
+
+  if (attachRemove) {
+    attachRemove.addEventListener('click', clearAttachment);
+  }
+
+  if (suggestionsEl) {
+    suggestionsEl.addEventListener('click', function (event) {
+      var button = event.target.closest('.ai-suggestion');
+      if (!button || busy) {
+        return;
+      }
+      if (input) {
+        input.value = button.getAttribute('data-prompt') || button.textContent || '';
+        autoGrow();
+        sendMessage();
+      }
+    });
+  }
+
+  if (panel) {
+    panel.addEventListener('dragover', function (event) {
+      event.preventDefault();
+    });
+    panel.addEventListener('drop', function (event) {
+      event.preventDefault();
+      if (event.dataTransfer && event.dataTransfer.files.length) {
+        setAttachment(event.dataTransfer.files[0]);
+      }
     });
   }
 
@@ -328,19 +300,12 @@
         var file = item.getAsFile();
         if (file) {
           event.preventDefault();
-          parseImage(file);
+          setAttachment(file);
           return;
         }
       }
     }
   });
 
-  document.addEventListener('dragover', function (event) {
-    event.preventDefault();
-  });
-  document.addEventListener('drop', function (event) {
-    if (!panel.contains(event.target)) {
-      event.preventDefault();
-    }
-  });
+  autoGrow();
 })();

@@ -588,6 +588,97 @@ class SchedulTestCase(unittest.TestCase):
         self.assertEqual(second.get_json()["added"], [])
         self.assertEqual(len(second.get_json()["skipped"]), 3)
 
+    def test_ai_chat_requires_login(self):
+        response = self.client.post("/api/ai/chat", data={"message": "本周有安排吗"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_ai_chat_adds_actions(self):
+        self.login_ok()
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {
+                "reply": "已帮你排好下周三的面试。",
+                "actions": [
+                    {
+                        "type": "create",
+                        "date": "2026-11-25",
+                        "time": "15:00",
+                        "kind": "interview",
+                        "company": "字节跳动",
+                        "role": "AI 应用开发",
+                        "address": "腾讯会议 123",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                data={
+                    "message": "帮我排下周三下午3点面试，字节跳动 AI 应用开发，腾讯会议 123",
+                    "history": "[]",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["reply"], "已帮你排好下周三的面试。")
+        self.assertEqual(len(data["added"]), 1)
+        stored = self.client.get("/api/days/2026-11-25").get_json()["event"]
+        self.assertIn("15:00 公司：字节跳动｜岗位：AI 应用开发｜地址：腾讯会议 123", stored)
+
+    def test_ai_chat_query_only(self):
+        self.login_ok()
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            CHAT_MODEL="test-model",
+        )
+        content = json.dumps(
+            {"reply": "那天下午没有安排。", "actions": []}, ensure_ascii=False
+        )
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return body
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            response = self.client.post(
+                "/api/ai/chat", data={"message": "2026-11-25 下午有空吗？"}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["added"], [])
+        self.assertEqual(self.client.get("/api/days/2026-11-25").get_json()["event"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

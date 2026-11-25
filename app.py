@@ -392,7 +392,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
     app = Flask(__name__)
     app.config.update(
         SECRET_KEY=secret_key,
-        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
+        MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES + 1024 * 1024,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "") == "1",
@@ -405,6 +405,9 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         ).strip(),
         VISION_MODEL=os.environ.get("VISION_MODEL", "qwen3-vl-plus").strip(),
+        CHAT_MODEL=os.environ.get(
+            "CHAT_MODEL", os.environ.get("VISION_MODEL", "qwen3-vl-plus")
+        ).strip(),
         DATA_DIR=data_dir,
         UPLOAD_DIR=upload_dir,
         DB_PATH=db_path,
@@ -584,6 +587,160 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                 part.get("text", "") for part in content if isinstance(part, dict)
             )
         return _normalize_ai_events(_extract_json_object(str(content)))
+
+    def chat_snapshot() -> str:
+        """给对话模型提供最近 120 天的日程快照。"""
+        today = today_fn()
+        rows = get_db().execute(
+            "SELECT date, event FROM days WHERE date BETWEEN ? AND ? ORDER BY date",
+            (
+                (today - dt.timedelta(days=7)).isoformat(),
+                (today + dt.timedelta(days=120)).isoformat(),
+            ),
+        ).fetchall()
+        lines = []
+        for row in rows:
+            text = (row["event"] or "").replace("\r\n", "\n").replace("\n", " / ").strip()
+            if text:
+                lines.append(f"{row['date']}: {text[:400]}")
+        return "\n".join(lines)[:6000] or "（未来 120 天暂无日程）"
+
+    def apply_ai_events(events: list[dict]) -> tuple[list[dict], list[dict]]:
+        """把校验后的日程追加到事件文本，跳过已存在的行。"""
+        db = get_db()
+        added: list[dict] = []
+        skipped: list[dict] = []
+        now_iso = _iso_now()
+        for event in events:
+            line = _ai_event_line(event)
+            row = db.execute(
+                "SELECT event FROM days WHERE date = ?", (event["date"],)
+            ).fetchone()
+            existing = row["event"] if row else ""
+            existing_lines = {item.strip() for item in existing.splitlines() if item.strip()}
+            if line in existing_lines:
+                skipped.append({**event, "line": line, "reason": "已存在"})
+                continue
+            new_event = existing.rstrip("\n")
+            new_event = (new_event + "\n" if new_event else "") + line
+            db.execute(
+                """
+                INSERT INTO days(date, event, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET event = excluded.event, updated_at = excluded.updated_at
+                """,
+                (event["date"], new_event, now_iso),
+            )
+            added.append({**event, "line": line})
+        db.commit()
+        return added, skipped
+
+    def chat_reply(
+        message: str,
+        history: list[dict],
+        image_bytes: bytes | None,
+        image_mime: str | None,
+    ) -> tuple[str, list[dict]]:
+        """调用对话模型，返回回复文本和待执行的排期 actions。"""
+        api_key = str(app.config["VISION_API_KEY"])
+        if not api_key:
+            raise RuntimeError("AI 服务未配置")
+        now = dt.datetime.now(tz)
+        weekday = WEEKDAY_CN[now.weekday()]
+        tz_name = os.environ.get("APP_TZ", "Asia/Shanghai")
+        snapshot = chat_snapshot()
+        system_prompt = f"""你是「日程」应用里的 AI 助手，帮用户查期和排期。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
+最近 120 天已有日程（每行日期: 内容）：
+{snapshot}
+
+你可以：
+1. 查期：根据上面已有日程，回答某天、某时间段是否有空、有哪些安排。没有记录就说空闲；不要编造不存在的日程。
+2. 排期：用户明确要求新增/安排/记录日程时，生成 actions 写入日历；如果缺少日期、时间、事项等关键信息，先在 reply 里追问，不要猜。
+
+只输出严格 JSON，不要 markdown，不要解释：
+{{"reply":"给用户看的中文回复","actions":[{{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"interview","company":"公司名","role":"岗位","address":"地址或会议信息"}},{{"type":"create","date":"YYYY-MM-DD","time":"HH:MM 或空","kind":"general","title":"事项","address":"地点或会议信息"}}]}}
+
+规则：
+1. 只有用户明确要求新增/安排/记录时才输出 create actions；只是查期、提问或聊天时 actions 为空。
+2. date 必须是绝对日期，相对日期按当前时间换算；time 用 24 小时制 HH:MM，不确定就留空；不要用当前时间填充用户没说的时间。
+3. 面试/招聘相关 kind=interview，填 company、role、address；其他日程 kind=general，填 title、address，company/role 留空。
+4. 不支持修改或删除已有日程；用户提出时在 reply 里说明去当天页手动修改。
+5. 用户发截图时：解析截图里明确出现的日程；如果用户只是询问截图内容，只回答不写入；如果用户要求导入，或只发截图没有提问，则生成 actions 导入。
+6. 同一日程已存在就不要重复创建，在 reply 里说明；不要输出 type 不是 create 的 action。
+7. reply 要简洁、自然、中文，不要提到 JSON 或内部规则；使用纯文本，不要 markdown 格式。"""
+
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        for item in history[-12:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            content = str(item.get("content") or "").strip()[:2000]
+            if role in {"user", "assistant"} and content:
+                messages.append({"role": role, "content": content})
+
+        if image_bytes:
+            content = message or "请解析这张截图里的日程并加入日历。"
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": content},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{image_mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+                            },
+                        },
+                    ],
+                }
+            )
+        else:
+            messages.append({"role": "user", "content": message})
+
+        payload = {
+            "model": str(app.config["CHAT_MODEL"]),
+            "messages": messages,
+            "temperature": 0.2,
+        }
+        request_obj = urllib.request.Request(
+            str(app.config["VISION_API_URL"]),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request_obj, timeout=90) as response:
+                raw = response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError(f"AI 服务返回错误（HTTP {exc.code}）：{detail}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError(f"AI 服务连接失败：{exc}") from None
+
+        try:
+            data = json.loads(raw)
+            content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        except (ValueError, IndexError, AttributeError):
+            raise RuntimeError("AI 返回格式异常") from None
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        text = str(content or "").strip()
+        parsed = _extract_json_object(text)
+        if isinstance(parsed, dict):
+            reply = str(parsed.get("reply") or "").strip()
+            actions = parsed.get("actions")
+            if not isinstance(actions, list):
+                actions = []
+        else:
+            reply = text
+            actions = []
+        if not reply:
+            reply = "我暂时没有理解，可以再说一次吗？"
+        return reply[:2000], [item for item in actions[:20] if isinstance(item, dict)]
 
     @app.get("/favicon.ico")
     def favicon():
@@ -834,32 +991,72 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             app.logger.warning("AI parse failed: %s", exc)
             return jsonify({"error": str(exc)}), 502
 
-        db = get_db()
-        added: list[dict] = []
-        skipped: list[dict] = []
-        now_iso = _iso_now()
-        for event in events:
-            line = _ai_event_line(event)
-            row = db.execute(
-                "SELECT event FROM days WHERE date = ?", (event["date"],)
-            ).fetchone()
-            existing = row["event"] if row else ""
-            existing_lines = {item.strip() for item in existing.splitlines() if item.strip()}
-            if line in existing_lines:
-                skipped.append({**event, "line": line, "reason": "已存在"})
-                continue
-            new_event = existing.rstrip("\n")
-            new_event = (new_event + "\n" if new_event else "") + line
-            db.execute(
-                """
-                INSERT INTO days(date, event, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(date) DO UPDATE SET event = excluded.event, updated_at = excluded.updated_at
-                """,
-                (event["date"], new_event, now_iso),
-            )
-            added.append({**event, "line": line})
-        db.commit()
+        added, skipped = apply_ai_events(events)
         return jsonify({"added": added, "skipped": skipped, "events": events})
+
+    @app.post("/api/ai/chat")
+    @login_required
+    def api_ai_chat():
+        """对话式 AI：查期、排期，并可附带截图解析。"""
+        if not app.config["VISION_API_KEY"]:
+            return jsonify({"error": "AI 服务未配置（缺少 DASHSCOPE_API_KEY）"}), 503
+        ip = request.remote_addr or "unknown"
+        now_ts = time.time()
+        if now_ts - _AI_LAST_CALL.get(ip, 0.0) < _AI_MIN_INTERVAL:
+            return jsonify({"error": "请求太快，请稍等几秒再试"}), 429
+        _AI_LAST_CALL[ip] = now_ts
+
+        message = str(request.form.get("message") or "").strip()[:2000]
+        image_bytes: bytes | None = None
+        image_mime: str | None = None
+        image_file = request.files.get("image")
+        if image_file is not None:
+            image_bytes = image_file.read()
+            if len(image_bytes) > MAX_UPLOAD_BYTES:
+                return jsonify({"error": "截图不能超过 10MB"}), 413
+            sniffed = _sniff_image(image_bytes)
+            if sniffed is None:
+                return jsonify({"error": "仅支持 PNG / JPG / GIF / WebP 图片"}), 415
+            image_mime = sniffed[0]
+        if not message and not image_bytes:
+            return jsonify({"error": "请输入内容或附上一张截图"}), 400
+
+        history: list[dict] = []
+        raw_history = request.form.get("history") or "[]"
+        try:
+            parsed_history = json.loads(raw_history)
+        except ValueError:
+            parsed_history = []
+        if isinstance(parsed_history, list):
+            for item in parsed_history[-12:]:
+                if not isinstance(item, dict):
+                    continue
+                role = item.get("role")
+                content = str(item.get("content") or "").strip()
+                if role in {"user", "assistant"} and content:
+                    history.append({"role": role, "content": content[:2000]})
+
+        try:
+            reply, raw_actions = chat_reply(
+                message, history, image_bytes, image_mime
+            )
+        except RuntimeError as exc:
+            app.logger.warning("AI chat failed: %s", exc)
+            return jsonify({"error": str(exc)}), 502
+
+        actions = []
+        for action in raw_actions:
+            action_type = str(action.get("type") or "create").lower()
+            if action_type == "create":
+                actions.append(action)
+        events = _normalize_ai_events({"events": actions})
+        added, skipped = apply_ai_events(events)
+        missing = len(actions) - len(events)
+        if missing > 0:
+            reply += f"\n（有 {missing} 条日程缺少日期/时间或格式不完整，未写入，请补充。）"
+        return jsonify(
+            {"reply": reply, "added": added, "skipped": skipped}
+        )
 
     @app.get("/uploads/<date_str>/<name>")
     @login_required
