@@ -4,6 +4,7 @@
 """
 
 import base64
+import io
 import json
 import re
 import shutil
@@ -898,6 +899,79 @@ class SchedulTestCase(unittest.TestCase):
     def test_ai_chat_history_requires_login(self):
         response = self.client.get("/api/ai/chat/history")
         self.assertEqual(response.status_code, 401)
+
+    def test_ai_chat_uses_vision_then_text_model(self):
+        self.login_ok()
+        self.app.config.update(
+            VISION_API_KEY="test-key",
+            VISION_API_URL="https://example.invalid/v1/chat/completions",
+            VISION_MODEL="vision-test",
+            CHAT_MODEL="chat-test",
+        )
+        calls: list[str] = []
+
+        vision_text = "2026-11-26 10:00 公司：测试公司 岗位：后端开发 腾讯会议 123"
+        reasoning = json.dumps(
+            {
+                "reply": "已加入 11 月 26 日的面试。",
+                "actions": [
+                    {
+                        "type": "create",
+                        "date": "2026-11-26",
+                        "time": "10:00",
+                        "kind": "interview",
+                        "company": "测试公司",
+                        "role": "后端开发",
+                        "address": "腾讯会议 123",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        class FakeResponse:
+            def __init__(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                if len(calls) == 1:
+                    content = vision_text
+                else:
+                    content = reasoning
+                return json.dumps(
+                    {"choices": [{"message": {"content": content}}]}
+                ).encode()
+
+        def fake_urlopen(request_obj, timeout=0):
+            payload = json.loads(request_obj.data)
+            calls.append(payload["model"])
+            return FakeResponse()
+
+        app_module._AI_LAST_CALL.clear()
+        with patch.object(
+            app_module.urllib.request, "urlopen", side_effect=fake_urlopen
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                data={
+                    "message": "把截图里的日程加进来",
+                    "image": (io.BytesIO(PNG_1X1), "shot.png"),
+                },
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, ["vision-test", "chat-test"])
+        self.assertEqual(len(response.get_json()["added"]), 1)
+        self.assertIn(
+            "公司：测试公司",
+            self.client.get("/api/days/2026-11-26").get_json()["event"],
+        )
 
 
 if __name__ == "__main__":

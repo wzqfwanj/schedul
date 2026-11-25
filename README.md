@@ -34,6 +34,7 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 
 - **月历一览**：周一开头的月视图，可切换上/下月、「今天」；有事件或截图的日期显示圆点：**面试日程为蓝点、通用日程为白点**，每个日程一个点，同一天多条面试会显示多个蓝点，两类都有时蓝白并排。判断面试的规则：包含「面试」、`公司：`/`岗位：`，或岗位关键词与视频会议/电话等组合（例如「飞书视频会议：万志强 全栈」）。
 - **AI 对话框（查期 / 排期 / 改期 / 截图导入）**：月历右侧可以直接和 AI 对话。
+  - **模型分工**：视觉模型 `qwen3-vl-plus` 只负责截图 OCR/文字提取；查期、排期、改期等推理和 actions 决策交给强文本模型 `qwen3.8-max`。
   - **查期**：问「本周有什么安排」「明天下午有空吗」「11月25日有什么」等，AI 根据未来 120 天的日历回答空档和已有安排，不会编造。
   - **排期**：说「帮我排下周三下午3点面试，公司字节跳动，岗位 AI 开发，腾讯会议…」，AI 会自动写入对应日期；信息不够时会先追问，不会猜。
   - **改期**：支持修改、移动、删除单条日程，也支持「25日改成html，其他往后推」这种插入新任务并整体顺延（会议/面试保持不动，例如 25 日 html、26 日 css、27 日 js…）；AI 会精确匹配原日程行，改完在回复里列出改动。缺少信息或匹配不到原文时会追问，不会乱改。
@@ -59,7 +60,8 @@ Flask + SQLite 单文件后端，原生 HTML/CSS/JS 前端：无构建步骤、�
 | 生产 WSGI 服务器 | waitress 3（`waitress>=3.0,<4`） |
 | 存储 | SQLite（Python 标准库 `sqlite3`）+ 本地文件系统 |
 | 前端 | 原生 HTML / CSS / JavaScript，Jinja2 模板，无构建步骤；灰色单主题 |
-| AI 视觉 | 阿里云百炼 `qwen3-vl-plus`（OpenAI 兼容接口，可选） |
+| AI 视觉 | 阿里云百炼 `qwen3-vl-plus`，只做截图 OCR/文字提取 |
+| AI 推理 | 阿里云百炼 `qwen3.8-max`，负责查期/排期/改期与 actions 决策 |
 | 部署 | nginx 反向代理 + systemd + Let's Encrypt（见 [deploy/DEPLOY.md](deploy/DEPLOY.md)） |
 
 > 前端遵循「灰色单主题极简模板」：无主题切换、无阴影、无外部字体/图标/CDN（面试日程的蓝色圆点是唯一强调色）。模板默认不引入 JS；本系统的「事件直接编辑、Ctrl+V 截图、AI 导入」需要浏览器交互，因此只使用两个原生 JS 文件（`day.js`、`ai.js`），零依赖、零构建。登录页不加载 JS。
@@ -128,7 +130,7 @@ python app.py
 ```powershell
 $env:DASHSCOPE_API_KEY = "sk-..."
 $env:VISION_MODEL = "qwen3-vl-plus"
-$env:CHAT_MODEL = "qwen3-vl-plus"
+$env:CHAT_MODEL = "qwen3.8-max"
 # Token Plan / 工作空间专用地址按百炼控制台填写；默认使用 DashScope 兼容接口
 $env:VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 ```
@@ -136,7 +138,7 @@ $env:VISION_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/co
 ```bash
 export DASHSCOPE_API_KEY="sk-..."
 export VISION_MODEL="qwen3-vl-plus"
-export CHAT_MODEL="qwen3-vl-plus"
+export CHAT_MODEL="qwen3.8-max"
 export VISION_API_URL="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 ```
 
@@ -193,8 +195,8 @@ Windows 可用 `sqlite3.exe` 执行同样的 `.backup`，再对 `data\uploads` �
 | `COOKIE_SECURE` | `0` | 设为 `1` 时会话 Cookie 仅通过 HTTPS 传输。**HTTPS 部署必须设为 1**；纯 HTTP 调试时保持 0，否则登录后 Cookie 不会发送、表现为登录无效 |
 | `DASHSCOPE_API_KEY` | 空 | 阿里云百炼 API Key；留空时「AI 助手」不可用，其余功能正常 |
 | `VISION_API_URL` | DashScope 兼容接口 | OpenAI 兼容的 chat/completions 地址。百炼 Token Plan / 工作空间专用地址按控制台填写 |
-| `VISION_MODEL` | `qwen3-vl-plus` | 截图解析使用的视觉模型名 |
-| `CHAT_MODEL` | 同 `VISION_MODEL` | AI 对话框使用的模型名；可单独指定文本模型 |
+| `VISION_MODEL` | `qwen3-vl-plus` | 视觉模型，只负责截图 OCR/文字提取 |
+| `CHAT_MODEL` | `qwen3.8-max` | 文本推理模型，负责查期/排期/改期和 actions 决策 |
 | `HOST` | `127.0.0.1` | 仅 `python app.py` 开发服务器使用：监听地址。容器内可设为 `0.0.0.0` |
 | `PORT` | `8000` | 仅 `python app.py` 开发服务器使用：监听端口。waitress 的监听地址由 `--listen` 参数决定 |
 
@@ -259,7 +261,7 @@ curl -b cookies.txt -X DELETE http://127.0.0.1:8000/api/images/1
 python -m unittest discover -s tests -v
 ```
 
-当前共 42 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、面试/通用日程圆点类型与多日程圆点数量、截图按 `<资料>` 分组上传/查看/下载/删除、AI 对话查期/排期/改期/插入顺延/整体后移/删除/会话记忆、AI 解析结果校验与时间格式归一化、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
+当前共 43 个用例，全部通过。测试覆盖登录/登出、登录限流、开放重定向拦截、月历与当天页、事件保存/清空/校验/XSS 转义、面试/通用日程圆点类型与多日程圆点数量、截图按 `<资料>` 分组上传/查看/下载/删除、AI 对话查期/排期/改期/插入顺延/整体后移/删除/会话记忆、视觉模型 OCR 与文本推理模型拆分、AI 解析结果校验与时间格式归一化、伪造与截断图片拒绝、路径穿越、安全响应头等；每个用例使用临时数据目录，不会读写 `data/` 中的真实数据。
 
 ## 安全说明
 

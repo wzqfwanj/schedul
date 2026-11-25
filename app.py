@@ -405,9 +405,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         ).strip(),
         VISION_MODEL=os.environ.get("VISION_MODEL", "qwen3-vl-plus").strip(),
-        CHAT_MODEL=os.environ.get(
-            "CHAT_MODEL", os.environ.get("VISION_MODEL", "qwen3-vl-plus")
-        ).strip(),
+        CHAT_MODEL=os.environ.get("CHAT_MODEL", "qwen3.8-max").strip(),
         DATA_DIR=data_dir,
         UPLOAD_DIR=upload_dir,
         DB_PATH=db_path,
@@ -595,6 +593,66 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
                 part.get("text", "") for part in content if isinstance(part, dict)
             )
         return _normalize_ai_events(_extract_json_object(str(content)))
+
+    def vision_extract(image_bytes: bytes, mime: str) -> str:
+        """只用视觉模型做截图 OCR/文字提取，不在这里做排期推理。"""
+        api_key = str(app.config["VISION_API_KEY"])
+        if not api_key:
+            raise RuntimeError("视觉识别服务未配置")
+        prompt = """你是截图识别器，只负责把图片里的文字和日程线索提取成纯文本。
+不要做推理，不要决定新增/修改/删除，不要生成 JSON、建议或回复。
+
+要求：
+1. 按图片从上到下的顺序列出所有可见文字。
+2. 重点保留：日期、时间、公司、岗位/职位、联系人、地址、会议链接、会议号、事项标题、备注。
+3. 如果截图不是日程，也简要描述关键内容。
+4. 看不清的字用「?」标注，不要编造。"""
+        image_b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": str(app.config["VISION_MODEL"]),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+                        },
+                    ],
+                }
+            ],
+            "temperature": 0,
+        }
+        request_obj = urllib.request.Request(
+            str(app.config["VISION_API_URL"]),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request_obj, timeout=90) as response:
+                raw = response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError(f"视觉识别服务返回错误（HTTP {exc.code}）：{detail}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError(f"视觉识别服务连接失败：{exc}") from None
+
+        try:
+            data = json.loads(raw)
+            content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        except (ValueError, IndexError, AttributeError):
+            raise RuntimeError("视觉识别返回格式异常") from None
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        text = str(content or "").strip()
+        return text[:8000] or "（没有识别到文字）"
 
     def chat_snapshot() -> str:
         """给对话模型提供最近 120 天的逐行日程快照。"""
@@ -983,10 +1041,9 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
     def chat_reply(
         message: str,
         history: list[dict],
-        image_bytes: bytes | None,
-        image_mime: str | None,
+        image_text: str | None,
     ) -> tuple[str, list[dict]]:
-        """调用对话模型，返回回复文本和待执行的排期 actions。"""
+        """用文本推理模型生成回复和 actions；截图文字由视觉模型预提取。"""
         api_key = str(app.config["VISION_API_KEY"])
         if not api_key:
             raise RuntimeError("AI 服务未配置")
@@ -994,7 +1051,9 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         weekday = WEEKDAY_CN[now.weekday()]
         tz_name = os.environ.get("APP_TZ", "Asia/Shanghai")
         snapshot = chat_snapshot()
-        system_prompt = f"""你是「日程」应用里的 AI 助手，帮用户查期、排期和改期。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
+        system_prompt = f"""你是「日程」应用里的 AI 助手，负责查期、排期和改期。当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{tz_name}，星期{weekday}）。
+截图已经由视觉模型转成文字，附在用户消息后面；你只负责理解文字、推理和生成操作，不要声称自己直接看到了图片。
+
 最近 120 天已有日程（日期下一行一条，行首 - 后面是当天事件原文）：
 {snapshot}
 
@@ -1023,7 +1082,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 7. shift：把 after_date 之后的所有通用日程整体平移 days 天；scope=general 时会跳过会议/面试；这是“其他往后推”的首选，不要用 create 复制。
 8. insert：在 date 插入一条新日程 line，并把从该日起的原有通用学习任务整体顺延 shift 天，会议/面试保持不动；用于“X日改成Y，其他往后推”这类插入+顺延需求，不要用 update 覆盖原任务。若用户只说“把X日改成Y”而没有“往后推”，才用 update 直接替换。
 9. 修改/移动/删除前先确认 old_line/line 在快照中存在；找不到或不确定就追问，不要编造原文。用户没要求改的面试/会议不要动。
-10. 用户发截图时：解析截图里明确出现的日程；如果用户只是询问截图内容，只回答不写入；如果用户要求导入，或只发截图没有提问，则生成 create actions。
+10. 用户发来截图时，截图已经由视觉模型转成文字并附在当前用户消息后面；你根据识别文本理解，不要声称直接看到图片。用户只问截图内容则回答不写入；用户要求导入，或只发截图没有提问，则根据识别文本生成 create actions。
 11. reply 要简洁、自然、中文，说明做了哪些修改、移动了几条；不要提到 JSON 或内部规则；使用纯文本，不要 markdown 格式。"""
 
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -1035,22 +1094,17 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             if role in {"user", "assistant"} and content:
                 messages.append({"role": role, "content": content})
 
-        if image_bytes:
-            content = message or "请解析这张截图里的日程并加入日历。"
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": content},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{image_mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-                            },
-                        },
-                    ],
-                }
-            )
+        if image_text:
+            block = f"[用户附了一张截图，视觉模型识别结果]\n{image_text[:6000]}"
+            if message:
+                current_content = message + "\n\n" + block
+            else:
+                current_content = (
+                    "用户只发来一张截图，没有额外文字。"
+                    "请根据截图识别结果理解内容；如果里面有明确日程，导入日历。\n\n"
+                    + block
+                )
+            messages.append({"role": "user", "content": current_content})
         else:
             messages.append({"role": "user", "content": message})
 
@@ -1384,6 +1438,14 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
         if not message and not image_bytes:
             return jsonify({"error": "请输入内容或附上一张截图"}), 400
 
+        image_text: str | None = None
+        if image_bytes and image_mime:
+            try:
+                image_text = vision_extract(image_bytes, image_mime)
+            except RuntimeError as exc:
+                app.logger.warning("AI vision extract failed: %s", exc)
+                return jsonify({"error": str(exc)}), 502
+
         # 优先使用服务端保存的对话记忆；旧页面没有历史时兼容客户端传来的 history。
         history = [
             {"role": item["role"], "content": item["content"]}
@@ -1406,7 +1468,7 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
 
         try:
             reply, raw_actions = chat_reply(
-                message, history, image_bytes, image_mime
+                message, history, image_text
             )
         except RuntimeError as exc:
             app.logger.warning("AI chat failed: %s", exc)
