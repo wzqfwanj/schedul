@@ -733,7 +733,7 @@ class SchedulTestCase(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/ai/chat",
-                data={"message": "帮我在25日改成html，其他往后推"},
+                data={"message": "把25日改成html"},
             )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -808,14 +808,21 @@ class SchedulTestCase(unittest.TestCase):
         )
         content = json.dumps(
             {
-                "reply": "已插入 html 并顺延原有任务。",
+                "reply": "模型只做了后移，没有插入。",
                 "actions": [
                     {
-                        "type": "insert",
+                        "type": "update",
                         "date": "2026-11-25",
-                        "line": "html",
-                        "shift": 1,
-                    }
+                        "old_line": "css",
+                        "new_date": "2026-11-25",
+                        "new_line": "html",
+                    },
+                    {
+                        "type": "shift",
+                        "after_date": "2026-11-25",
+                        "days": 1,
+                        "scope": "general",
+                    },
                 ],
             },
             ensure_ascii=False,

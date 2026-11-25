@@ -899,6 +899,31 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             "dots": dots,
         }
 
+    def detect_insert_request(message: str) -> tuple[str, str] | None:
+        """识别“某日改成X，其他往后推/顺延”的固定意图。"""
+        if not re.search(r"(往后推|后推|往后顺延|顺延)", message):
+            return None
+        match = re.search(
+            r"(?:(\d{4})年)?\s*(?:(\d{1,2})月)?\s*(\d{1,2})\s*[日号]\s*"
+            r"(?:改成|改为|换成|变成)\s*(.+)",
+            message,
+        )
+        if not match:
+            return None
+        today = today_fn()
+        year = int(match.group(1) or today.year)
+        month = int(match.group(2) or today.month)
+        day = int(match.group(3))
+        rest = match.group(4).strip()
+        line = re.split(r"[，,。；;]|其他", rest, maxsplit=1)[0].strip(" \t\"'“”‘’")
+        if not line or len(line) > 200:
+            return None
+        try:
+            date_value = dt.date(year, month, day)
+        except ValueError:
+            return None
+        return date_value.isoformat(), line
+
     def chat_reply(
         message: str,
         history: list[dict],
@@ -1321,6 +1346,23 @@ def create_app(data_dir: str | Path | None = None) -> Flask:
             app.logger.warning("AI chat failed: %s", exc)
             return jsonify({"error": str(exc)}), 502
 
+        forced = detect_insert_request(message)
+        if forced:
+            forced_date, forced_line = forced
+            target = _valid_date(forced_date)
+            assert target is not None
+            raw_actions = [
+                {
+                    "type": "insert",
+                    "date": forced_date,
+                    "line": forced_line,
+                    "shift": 1,
+                }
+            ]
+            reply = (
+                f"已把 {target.month}月{target.day}日改为「{forced_line}」，"
+                "原有通用任务往后顺延一天；会议/面试保持不变。"
+            )
         result = apply_chat_actions(raw_actions)
         if result["failed"]:
             reply += f"\n（有 {len(result['failed'])} 个操作未执行，请核对原日程或补充信息。）"
